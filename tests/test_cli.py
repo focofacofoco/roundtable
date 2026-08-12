@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from facode_roundtable.cli import default_service, main, resolve_cli
 from facode_roundtable.config import Config, ProviderConfig, load_config, save_config
 from facode_roundtable.models import ProviderResponse, RunResult
@@ -68,7 +70,8 @@ def test_default_service_exposes_exact_five_head_catalog():
 
 
 def test_cli_resolution_finds_official_user_install_before_shell_restart(tmp_path, monkeypatch):
-    grok = tmp_path / ".grok" / "bin" / "grok.exe"
+    executable = "grok.exe" if os.name == "nt" else "grok"
+    grok = tmp_path / ".grok" / "bin" / executable
     grok.parent.mkdir(parents=True)
     grok.touch()
     monkeypatch.setattr("facode_roundtable.executables.shutil.which", lambda _: None)
