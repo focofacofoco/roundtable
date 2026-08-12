@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from facode_roundtable.catalog import PROVIDER_SPECS
+
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
@@ -54,13 +56,14 @@ class GrokAdapter:
                     reason="api_key_auth_forbidden",
                     cli_version=version,
                 )
+            spec = PROVIDER_SPECS[self.name]
             return ProviderStatus(
                 self.name,
                 True,
                 True,
-                auth_method="oauth",
+                auth_method=spec.auth,
                 cli_version=version,
-                research=True,
+                research=spec.research,
             )
         return ProviderStatus(
             self.name, True, False, reason="login_required", cli_version=version

@@ -7,8 +7,9 @@ from pathlib import Path
 import re
 from typing import Any
 
+from facode_roundtable.catalog import PROVIDER_NAMES, PROVIDER_SPECS
 
-PROVIDERS = ("codex", "claude", "grok", "gemini", "minimax")
+PROVIDERS = PROVIDER_NAMES
 _CONFIG_FIELDS = {
     "schema_version",
     "default_heads",
@@ -67,14 +68,9 @@ class ProviderConfig:
         }
 
 
-_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
-    "codex": {"model": "gpt-5.6-sol", "effort": "high"},
-    "claude": {"model": "claude-opus-5", "effort": "high"},
-}
-
-
 def default_provider_config(name: str) -> ProviderConfig:
-    return ProviderConfig(**_PROVIDER_DEFAULTS.get(name, {}))
+    spec = PROVIDER_SPECS[name]
+    return ProviderConfig(model=spec.default_model, effort=spec.default_effort)
 
 
 def _default_providers() -> dict[str, ProviderConfig]:
@@ -129,7 +125,7 @@ class Config:
         for name, provider in self.providers.items():
             if (
                 provider.effort is not None
-                and "effort" not in _PROVIDER_DEFAULTS.get(name, {})
+                and not PROVIDER_SPECS[name].supports_effort
             ):
                 raise ConfigError(f"provider effort is unsupported for {name}")
         if self.default_heads != "available":
@@ -177,13 +173,13 @@ class Config:
             raw_provider = dict(raw_provider)
             if (
                 schema_version == 1
-                and name in _PROVIDER_DEFAULTS
+                and PROVIDER_SPECS[name].default_model is not None
                 and raw_provider.get("model") is None
             ):
                 raw_provider.pop("model", None)
             if (
                 schema_version == 2
-                and raw_provider.get("model") == _PROVIDER_DEFAULTS.get(name, {}).get("model")
+                and raw_provider.get("model") == PROVIDER_SPECS[name].default_model
                 and raw_provider.get("effort") == "xhigh"
             ):
                 raw_provider["effort"] = "high"

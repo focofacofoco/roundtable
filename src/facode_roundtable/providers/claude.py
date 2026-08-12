@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from facode_roundtable.catalog import PROVIDER_SPECS
+
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
@@ -34,14 +36,15 @@ class ClaudeAdapter:
             )
         method = str(payload.get("authMethod", "")).lower()
         if payload.get("loggedIn") is True and method in {"claude.ai", "firstparty", "first_party"}:
+            spec = PROVIDER_SPECS[self.name]
             return ProviderStatus(
                 self.name,
                 True,
                 True,
-                auth_method="first_party",
+                auth_method=spec.auth,
                 cli_version=version,
                 model=self.default_model,
-                research=True,
+                research=spec.research,
             )
         if "api" in method or "key" in method:
             return ProviderStatus(

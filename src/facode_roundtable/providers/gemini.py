@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from facode_roundtable.catalog import PROVIDER_SPECS
+
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
@@ -18,13 +20,14 @@ class GeminiAdapter:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
         version = await probe_cli_version(self.runner, self.executable)
         if result.returncode == 0 and result.stdout.strip():
+            spec = PROVIDER_SPECS[self.name]
             return ProviderStatus(
                 self.name,
                 True,
                 True,
-                auth_method="google_sign_in",
+                auth_method=spec.auth,
                 cli_version=version,
-                research=False,
+                research=spec.research,
             )
         return ProviderStatus(
             self.name, True, False, reason="login_required", cli_version=version

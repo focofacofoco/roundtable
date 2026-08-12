@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import subprocess
+
+from jsonschema import validate
 
 from facode_roundtable.cli import default_service, main, resolve_cli
 from facode_roundtable.config import Config, ProviderConfig, load_config, save_config
@@ -65,9 +69,14 @@ def command_result(stdout="", stderr="", returncode=0, *, timed_out=False):
     return CommandResult(tuple(), returncode, stdout, stderr, 1, timed_out)
 
 
+def output_schema(name):
+    path = Path(__file__).parents[1] / "docs" / f"{name}.schema.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.9.0\n"
+    assert capsys.readouterr().out == "roundtable 0.10.0\n"
 
 
 def test_lightweight_cli_import_does_not_load_mcp_sdk():
@@ -145,10 +154,41 @@ def test_cli_maps_keyboard_interrupt_to_typed_exit(monkeypatch, capsys):
 def test_providers_json_reports_sanitized_login_status(capsys):
     code = main(["providers", "--json"], service=FakeService())
     output = capsys.readouterr().out
+    payload = json.loads(output)
 
     assert code == 0
+    assert payload["schema_version"] == 1
+    assert tuple(payload["capabilities"]) == (
+        "codex", "claude", "grok", "gemini", "minimax",
+    )
+    assert payload["capabilities"]["codex"] == {
+        "auth": "chatgpt",
+        "model_discovery": "official-cli",
+        "effort": True,
+        "research": False,
+    }
+    validate(payload, output_schema("providers"))
     assert '"auth_method": "chatgpt"' in output
     assert "email" not in output.lower()
+
+
+def test_doctor_json_exposes_the_same_catalog_capabilities(capsys, tmp_path):
+    code = main(
+        ["doctor", "--json"],
+        service=FakeService(),
+        config_file=tmp_path / "config.json",
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["schema_version"] == 1
+    assert payload["capabilities"]["claude"] == {
+        "auth": "first_party",
+        "model_discovery": "unsupported-by-cli",
+        "effort": True,
+        "research": True,
+    }
+    validate(payload, output_schema("doctor"))
 
 
 def test_config_set_show_and_reset_are_strict_and_atomic(tmp_path, capsys):
@@ -288,6 +328,36 @@ def test_grok_login_uses_device_oauth_and_api_key_lockdown(monkeypatch):
     assert captured["argv"] == ["resolved-grok", "login", "--device-auth"]
     assert captured["environment"]["GROK_DISABLE_API_KEY_AUTH"] == "1"
     assert "OPENAI_API_KEY" not in captured["environment"]
+
+
+def test_catalog_drives_exact_login_and_logout_commands(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
+    monkeypatch.setattr(
+        "facode_roundtable.cli.resolve_cli", lambda name: f"resolved-{name}"
+    )
+
+    expected = {
+        ("codex", "login"): ["resolved-codex", "login"],
+        ("codex", "logout"): ["resolved-codex", "logout"],
+        ("claude", "login"): ["resolved-claude", "auth", "login"],
+        ("claude", "logout"): ["resolved-claude", "auth", "logout"],
+        ("grok", "login"): ["resolved-grok", "login", "--device-auth"],
+        ("grok", "logout"): ["resolved-grok", "logout"],
+        ("gemini", "login"): ["resolved-agy"],
+        ("minimax", "login"): [
+            "resolved-mmx", "auth", "login", "--recommend", "--region=global",
+        ],
+        ("minimax", "logout"): ["resolved-mmx", "auth", "logout"],
+    }
+    for (provider, action), argv in expected.items():
+        assert main(["auth", action, provider], service=FakeService()) == 0
+        assert calls[-1] == argv
 
 
 def test_codex_model_discovery_uses_official_catalog_and_hides_internal_models(

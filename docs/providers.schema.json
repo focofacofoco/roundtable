@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/focofacofoco/roundtable/docs/providers.schema.json",
+  "title": "Roundtable providers output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "providers", "unsupported", "capabilities"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "providers": {"type": "array", "items": {"$ref": "#/$defs/providerStatus"}},
+    "unsupported": {"type": "object", "additionalProperties": {"type": "string"}},
+    "capabilities": {"$ref": "#/$defs/capabilityCatalog"}
+  },
+  "$defs": {
+    "providerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "installed", "eligible", "auth_method", "reason", "cli_version", "model", "research"],
+      "properties": {
+        "name": {"type": "string"},
+        "installed": {"type": "boolean"},
+        "eligible": {"type": "boolean"},
+        "auth_method": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "cli_version": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "research": {"type": "boolean"}
+      }
+    },
+    "capabilityCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codex", "claude", "grok", "gemini", "minimax"],
+      "properties": {
+        "codex": {"$ref": "#/$defs/capability"},
+        "claude": {"$ref": "#/$defs/capability"},
+        "grok": {"$ref": "#/$defs/capability"},
+        "gemini": {"$ref": "#/$defs/capability"},
+        "minimax": {"$ref": "#/$defs/capability"}
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auth", "model_discovery", "effort", "research"],
+      "properties": {
+        "auth": {"enum": ["chatgpt", "first_party", "oauth", "google_sign_in"]},
+        "model_discovery": {"enum": ["official-cli", "unsupported-by-cli"]},
+        "effort": {"type": "boolean"},
+        "research": {"type": "boolean"}
+      }
+    }
+  }
+}

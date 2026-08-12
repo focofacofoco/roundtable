@@ -11,6 +11,11 @@ import sys
 from typing import Sequence
 
 from facode_roundtable import __version__
+from facode_roundtable.catalog import (
+    PROVIDER_SPECS,
+    capabilities_payload,
+    unsupported_providers,
+)
 from facode_roundtable.config import (
     PROVIDERS,
     Config,
@@ -99,19 +104,19 @@ def default_service(config: Config | None = None) -> RoundtableService:
         {
             "codex": CodexAdapter(
                 runner,
-                resolve_cli("codex"),
+                resolve_cli(PROVIDER_SPECS["codex"].executable),
                 default_model=codex.model,
                 default_effort=codex.effort,
             ),
             "claude": ClaudeAdapter(
                 runner,
-                resolve_cli("claude"),
+                resolve_cli(PROVIDER_SPECS["claude"].executable),
                 default_model=claude.model,
                 default_effort=claude.effort,
             ),
-            "grok": GrokAdapter(runner, resolve_cli("grok")),
-            "gemini": GeminiAdapter(runner, resolve_cli("agy")),
-            "minimax": MiniMaxAdapter(runner, resolve_cli("mmx")),
+            "grok": GrokAdapter(runner, resolve_cli(PROVIDER_SPECS["grok"].executable)),
+            "gemini": GeminiAdapter(runner, resolve_cli(PROVIDER_SPECS["gemini"].executable)),
+            "minimax": MiniMaxAdapter(runner, resolve_cli(PROVIDER_SPECS["minimax"].executable)),
         },
         concurrency=effective.concurrency,
         enabled={
@@ -231,12 +236,18 @@ def _providers(service: RoundtableService, *, as_json: bool) -> int:
     statuses = asyncio.run(_statuses(service))
     payload = [status.to_dict() for status in statuses]
     if as_json:
-        print(json.dumps({"providers": payload, "unsupported": {"glm": "no_official_login_only_headless_cli"}}, indent=2))
+        print(json.dumps({
+            "schema_version": 1,
+            "providers": payload,
+            "unsupported": unsupported_providers(),
+            "capabilities": capabilities_payload(),
+        }, indent=2))
     else:
         for status in statuses:
             state = "eligible" if status.eligible else status.reason
             print(f"{status.name:8} {state}")
-        print("glm      unsupported (no official login-only headless CLI)")
+        for name, reason in unsupported_providers().items():
+            print(f"{name:8} unsupported ({reason.replace('_', ' ')})")
     return 0
 
 
@@ -289,10 +300,12 @@ def _doctor(
             result = asyncio.run(service.ask("Reply with exactly: OK", heads=[status.name], timeout=60))
             live_results[status.name] = "ok" if result.successful_heads else "failed"
     payload = {
+        "schema_version": 1,
         "config_path": str(path or config_path()),
         "config_valid": config_valid,
         "providers": [status.to_dict() for status in statuses],
         "live": live_results,
+        "capabilities": capabilities_payload(),
     }
     if as_json:
         print(json.dumps(payload, indent=2))
@@ -316,25 +329,12 @@ def _auth(service: RoundtableService, command: str, provider: str | None) -> int
             state = "eligible" if status.eligible else status.reason
             print(f"{status.name}: {state} ({status.auth_method or 'none'})")
         return 0 if all(item.eligible for item in selected) else 3
-    commands = {
-        ("codex", "login"): ["codex", "login"],
-        ("codex", "logout"): ["codex", "logout"],
-        ("claude", "login"): ["claude", "auth", "login"],
-        ("claude", "logout"): ["claude", "auth", "logout"],
-        ("grok", "login"): ["grok", "login", "--device-auth"],
-        ("grok", "logout"): ["grok", "logout"],
-        ("gemini", "login"): ["agy"],
-        ("minimax", "login"): [
-            "mmx", "auth", "login", "--recommend", "--region=global",
-        ],
-        ("minimax", "logout"): ["mmx", "auth", "logout"],
-    }
-    argv = commands.get((provider or "", command))
-    if not argv:
+    spec = PROVIDER_SPECS.get(provider or "")
+    command_args = getattr(spec, command, None) if spec is not None else None
+    if command_args is None:
         print(f"roundtable: {command} is not automatable for {provider}", file=sys.stderr)
         return 3
-    executable_names = {"gemini": "agy", "minimax": "mmx"}
-    argv[0] = resolve_cli(executable_names.get(provider or "", provider or ""))
+    argv = [resolve_cli(spec.executable), *command_args]
     environment = sanitize_environment(os.environ)
     if provider == "grok":
         environment["GROK_DISABLE_API_KEY_AUTH"] = "1"
@@ -363,22 +363,18 @@ async def _list_models_async(
     failed = False
     for name in providers:
         settings = config.providers[name]
-        if name in {"claude", "minimax"}:
+        spec = PROVIDER_SPECS[name]
+        if spec.model_command is None:
             print(
                 _model_catalog_header(
                     name,
                     settings.model,
                     settings.effort,
-                    "unsupported-by-cli",
+                    spec.model_discovery,
                 )
             )
             continue
-        executable = "agy" if name == "gemini" else name
-        command = (
-            [resolve_cli(executable), "debug", "models"]
-            if name == "codex"
-            else [resolve_cli(executable), "models"]
-        )
+        command = [resolve_cli(spec.executable), *spec.model_command]
         result = await runner.run(
             command,
             timeout=20,
@@ -401,7 +397,9 @@ async def _list_models_async(
             )
             failed = True
             continue
-        print(_model_catalog_header(name, settings.model, settings.effort, "official-cli"))
+        print(_model_catalog_header(
+            name, settings.model, settings.effort, spec.model_discovery
+        ))
         for model in models:
             print(f"  {model}")
     return 3 if failed else 0

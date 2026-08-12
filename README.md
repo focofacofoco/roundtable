@@ -5,9 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-gh release download v0.9.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
-gh release verify-asset v0.9.0 roundtable-dist/facode_roundtable-0.9.0-py3-none-any.whl --repo focofacofoco/roundtable
-uv tool install roundtable-dist/facode_roundtable-0.9.0-py3-none-any.whl
+gh release download v0.10.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.10.0 roundtable-dist/facode_roundtable-0.10.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.10.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -83,6 +83,8 @@ use `--model provider=id`. Authentication remains login-only in every case.
 - Questions, context, peer answers and chair output are untrusted text; Roundtable never
   executes them, but model-level prompt injection cannot be eliminated by delimiters.
 - The JSON contract is published at [`docs/run-result.schema.json`](docs/run-result.schema.json).
+- Provider capabilities come from one internal specification and are exposed additively in
+  [`providers --json`](docs/providers.schema.json) and [`doctor --json`](docs/doctor.schema.json).
 
 ## MCP
 

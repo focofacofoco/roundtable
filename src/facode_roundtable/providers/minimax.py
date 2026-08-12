@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from facode_roundtable.catalog import PROVIDER_SPECS
+
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 from .grok import _json_text
 
@@ -28,13 +30,14 @@ class MiniMaxAdapter:
                 cli_version=version,
             )
         if result.returncode == 0 and "oauth" in output:
+            spec = PROVIDER_SPECS[self.name]
             return ProviderStatus(
                 self.name,
                 True,
                 True,
-                auth_method="oauth",
+                auth_method=spec.auth,
                 cli_version=version,
-                research=False,
+                research=spec.research,
             )
         return ProviderStatus(
             self.name, True, False, reason="login_required", cli_version=version

@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from facode_roundtable.config import Config, ConfigError, load_config, save_config
+from facode_roundtable.config import Config, ConfigError, PROVIDERS, load_config, save_config
+from facode_roundtable.catalog import PROVIDER_NAMES, PROVIDER_SPECS
 from facode_roundtable.models import ExitCode, ProviderError, ProviderResponse, RunResult
-from facode_roundtable.providers import PROVIDER_NAMES, unsupported_providers
+from facode_roundtable.providers import unsupported_providers
 from facode_roundtable.runner import sanitize_environment
 
 
@@ -186,7 +187,86 @@ def test_run_result_has_stable_public_shape_and_exit_semantics():
 
 def test_provider_catalog_is_exact_and_glm_is_explicitly_unsupported():
     assert PROVIDER_NAMES == ("codex", "claude", "grok", "gemini", "minimax")
+    assert PROVIDERS is PROVIDER_NAMES
     assert unsupported_providers() == {"glm": "no_official_login_only_headless_cli"}
+
+
+def test_provider_specs_are_the_single_source_for_defaults_and_capabilities():
+    assert {
+        name: {
+            "executable": spec.executable,
+            "model": spec.default_model,
+            "effort": spec.default_effort,
+            "capabilities": spec.capabilities(),
+        }
+        for name, spec in PROVIDER_SPECS.items()
+    } == {
+        "codex": {
+            "executable": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high",
+            "capabilities": {
+                "auth": "chatgpt",
+                "model_discovery": "official-cli",
+                "effort": True,
+                "research": False,
+            },
+        },
+        "claude": {
+            "executable": "claude",
+            "model": "claude-opus-5",
+            "effort": "high",
+            "capabilities": {
+                "auth": "first_party",
+                "model_discovery": "unsupported-by-cli",
+                "effort": True,
+                "research": True,
+            },
+        },
+        "grok": {
+            "executable": "grok",
+            "model": None,
+            "effort": None,
+            "capabilities": {
+                "auth": "oauth",
+                "model_discovery": "official-cli",
+                "effort": False,
+                "research": True,
+            },
+        },
+        "gemini": {
+            "executable": "agy",
+            "model": None,
+            "effort": None,
+            "capabilities": {
+                "auth": "google_sign_in",
+                "model_discovery": "official-cli",
+                "effort": False,
+                "research": False,
+            },
+        },
+        "minimax": {
+            "executable": "mmx",
+            "model": None,
+            "effort": None,
+            "capabilities": {
+                "auth": "oauth",
+                "model_discovery": "unsupported-by-cli",
+                "effort": False,
+                "research": False,
+            },
+        },
+    }
+    config = Config()
+    assert {
+        name: (provider.model, provider.effort)
+        for name, provider in config.providers.items()
+    } == {
+        name: (spec.default_model, spec.default_effort)
+        for name, spec in PROVIDER_SPECS.items()
+    }
+    with pytest.raises(TypeError):
+        PROVIDER_SPECS["codex"] = PROVIDER_SPECS["claude"]
 
 
 def test_environment_sanitization_removes_credentials_without_touching_safe_values():

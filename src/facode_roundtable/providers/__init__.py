@@ -1,5 +1,4 @@
-PROVIDER_NAMES = ("codex", "claude", "grok", "gemini", "minimax")
+from facode_roundtable.catalog import PROVIDER_NAMES, unsupported_providers
 
 
-def unsupported_providers() -> dict[str, str]:
-    return {"glm": "no_official_login_only_headless_cli"}
+__all__ = ["PROVIDER_NAMES", "unsupported_providers"]

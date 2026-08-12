@@ -8,6 +8,7 @@ from mcp.server import MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
+from facode_roundtable.catalog import capabilities_payload, unsupported_providers
 from facode_roundtable.config import Config, config_path, load_config
 from facode_roundtable.render import render_markdown
 from facode_roundtable.service import RoundtableService
@@ -31,14 +32,18 @@ class RunResultWire(BaseModel):
 
 
 class ProvidersWire(BaseModel):
+    schema_version: int
     providers: list[dict[str, Any]]
     unsupported: dict[str, str]
+    capabilities: dict[str, dict[str, Any]]
 
 
 class DoctorWire(BaseModel):
+    schema_version: int
     config_path: str
     config_valid: bool
     providers: list[dict[str, Any]]
+    capabilities: dict[str, dict[str, Any]]
 
 
 def create_server(
@@ -115,8 +120,10 @@ def create_server(
         """List provider eligibility without invoking a model."""
         statuses = await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
         payload = {
+            "schema_version": 1,
             "providers": [status.to_dict() for status in statuses],
-            "unsupported": {"glm": "no_official_login_only_headless_cli"},
+            "unsupported": unsupported_providers(),
+            "capabilities": capabilities_payload(),
         }
         text = "\n".join(
             f"- {item.name}: {'eligible' if item.eligible else item.reason}" for item in statuses
@@ -135,9 +142,11 @@ def create_server(
             valid = False
         statuses = await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
         payload = {
+            "schema_version": 1,
             "config_path": str(config_file or config_path()),
             "config_valid": valid,
             "providers": [status.to_dict() for status in statuses],
+            "capabilities": capabilities_payload(),
         }
         text = f"Config: {'valid' if valid else 'invalid'}\n" + "\n".join(
             f"- {item.name}: {'eligible' if item.eligible else item.reason}" for item in statuses

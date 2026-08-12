@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from facode_roundtable.catalog import PROVIDER_SPECS
+
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
@@ -48,14 +50,15 @@ class CodexAdapter:
         version = await probe_cli_version(self.runner, self.executable)
         output = f"{result.stdout}\n{result.stderr}".lower()
         if "chatgpt" in output and result.returncode == 0:
+            spec = PROVIDER_SPECS[self.name]
             return ProviderStatus(
                 self.name,
                 True,
                 True,
-                auth_method="chatgpt",
+                auth_method=spec.auth,
                 cli_version=version,
                 model=self.default_model,
-                research=False,
+                research=spec.research,
             )
         if "api key" in output or "api_key" in output:
             return ProviderStatus(

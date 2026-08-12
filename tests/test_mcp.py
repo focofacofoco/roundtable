@@ -9,12 +9,18 @@ from facode_roundtable.mcp_server import create_server
 from facode_roundtable.cli import main
 from facode_roundtable.config import Config, ProviderConfig
 from facode_roundtable.models import ProviderError, ProviderResponse, RunResult
+from facode_roundtable.providers.base import ProviderStatus
+
+
+class FakeStatusAdapter:
+    async def status(self):
+        return ProviderStatus("codex", True, True, auth_method="chatgpt")
 
 
 class FakeService:
     def __init__(self, *, fail: bool = False):
         self.fail = fail
-        self.adapters = {"codex": object()}
+        self.adapters = {"codex": FakeStatusAdapter()}
         self.calls: list[dict] = []
 
     async def ask(self, question, **kwargs):
@@ -68,6 +74,32 @@ def test_mcp_exposes_three_tools_with_output_schemas():
     }
     assert by_name["roundtable_providers"].input_schema["properties"] == {}
     assert by_name["roundtable_doctor"].input_schema["properties"] == {}
+
+
+def test_mcp_provider_and_doctor_contracts_share_catalog_capabilities(tmp_path):
+    service = FakeService()
+
+    providers = asyncio.run(call_tool(service, "roundtable_providers", {}))
+
+    async def doctor():
+        async with Client(
+            create_server(service=service, config_file=tmp_path / "config.json")
+        ) as client:
+            return await client.call_tool("roundtable_doctor", {})
+
+    diagnosis = asyncio.run(doctor())
+
+    assert providers.structured_content["schema_version"] == 1
+    assert diagnosis.structured_content["schema_version"] == 1
+    assert providers.structured_content["capabilities"] == (
+        diagnosis.structured_content["capabilities"]
+    )
+    assert providers.structured_content["capabilities"]["minimax"] == {
+        "auth": "oauth",
+        "model_discovery": "unsupported-by-cli",
+        "effort": False,
+        "research": False,
+    }
 
 
 def test_cli_and_mcp_share_the_same_structured_run_contract(capsys):

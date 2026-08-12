@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+from facode_roundtable.catalog import PROVIDER_SPECS
 from facode_roundtable.providers.base import CommandResult, ProviderStatus
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
@@ -27,6 +28,12 @@ def result(stdout: str = "", stderr: str = "", returncode: int = 0) -> CommandRe
     return CommandResult(tuple(), returncode, stdout, stderr, 1, False)
 
 
+def assert_catalog_status(status: ProviderStatus) -> None:
+    spec = PROVIDER_SPECS[status.name]
+    assert status.auth_method == spec.auth
+    assert status.research is spec.research
+
+
 def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
     chatgpt = CodexAdapter(
         RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")])
@@ -46,6 +53,7 @@ def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
         cli_version="codex-cli 1.2.3",
         research=False,
     )
+    assert_catalog_status(accepted)
     assert rejected.eligible is False
     assert rejected.reason == "api_key_auth_forbidden"
 
@@ -104,6 +112,7 @@ def test_claude_requires_first_party_login_and_invocation_disables_local_tools()
     argv, prompt = invoke_runner.calls[0]
 
     assert status.eligible is True
+    assert_catalog_status(status)
     assert status.auth_method == "first_party"
     assert status.cli_version == "2.1.0 (Claude Code)"
     assert response.content == "Claude answer"
@@ -148,6 +157,7 @@ def test_grok_requires_oauth_and_disable_api_key_policy():
     )
 
     assert accepted.eligible is True
+    assert_catalog_status(accepted)
     assert accepted.auth_method == "oauth"
     assert accepted.research is True
     assert accepted.cli_version == "grok 1.0.3"
@@ -274,6 +284,7 @@ def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
     argv, prompt = runner.calls[0]
 
     assert status.eligible is True
+    assert_catalog_status(status)
     assert status.auth_method == "google_sign_in"
     assert status.cli_version == "agy 1.1.12"
     assert status.research is False
@@ -302,6 +313,7 @@ def test_minimax_rejects_api_key_auth_and_uses_oauth_chat():
     argv, prompt = runner.calls[0]
 
     assert oauth.eligible is True
+    assert_catalog_status(oauth)
     assert oauth.auth_method == "oauth"
     assert oauth.cli_version == "mmx 1.0.19"
     assert key.reason == "api_key_auth_forbidden"
