@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "roundtable"
-version = "0.1.0"
-description = "A council of frontier models — for the decisions that matter. (a Frontier Infra project)"
+name = "facode-roundtable"
+version = "0.2.0"
+description = "A login-only council of frontier model CLIs"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Frontier Infra" }]
+authors = [{ name = "Frontier Infra" }, { name = "Facode" }]
 keywords = ["llm", "ai", "council", "deliberation", "cli", "mcp", "claude", "grok", "gemini", "openai"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -20,43 +20,29 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
   "Topic :: Utilities",
 ]
-# No runtime deps: the engine is bash + python3 stdlib only.
-dependencies = []
+dependencies = ["mcp>=2,<3"]
 
 [project.scripts]
-roundtable = "roundtable_cli:main"
+roundtable = "facode_roundtable.cli:main"
 
 [project.urls]
-Homepage = "https://roundtable.sh"
-Repository = "https://github.com/frontier-infra/roundtable"
-Issues = "https://github.com/frontier-infra/roundtable/issues"
+Homepage = "https://github.com/focofacofoco/roundtable"
+Repository = "https://github.com/focofacofoco/roundtable"
+Issues = "https://github.com/focofacofoco/roundtable/issues"
 
-# ---------------------------------------------------------------------------
-# Bundle the bash engine. The repo-root bin/ and lib/ dirs are sibling-owned
-# (built by other workers); force-include copies them into the package as
-# data, preserving the bin/ + lib/ sibling layout under _engine/ so the
-# dispatcher's relative `../lib` lookup keeps working once installed.
-#
-# The Claude Code skill (canonical source: plugins/roundtable/skills/roundtable/
-# SKILL.md) is also force-included as _engine/skill/SKILL.md so `roundtable
-# install` can drop it; lib/install.sh resolves it at <engine>/skill/SKILL.md.
-# ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
-packages = ["roundtable_cli"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"bin" = "roundtable_cli/_engine/bin"
-"lib" = "roundtable_cli/_engine/lib"
-"plugins/roundtable/skills/roundtable/SKILL.md" = "roundtable_cli/_engine/skill/SKILL.md"
+packages = ["src/facode_roundtable"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "/roundtable_cli",
-  "/bin",
-  "/lib",
+  "/src",
+  "/tests",
   "/plugins",
-  "/.claude-plugin",
   "/README.md",
   "/AGENTS.md",
   "/LICENSE",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --basetemp=.pytest-tmp"

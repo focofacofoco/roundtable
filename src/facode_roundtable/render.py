@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+import json
+
+from facode_roundtable.models import RunResult
+
+
+def render_json(result: RunResult) -> str:
+    return json.dumps(result.to_dict(), indent=2, ensure_ascii=False) + "\n"
+
+
+def render_markdown(result: RunResult) -> str:
+    lines = ["# Roundtable", "", f"Run: `{result.run_id}`", ""]
+    current_round = 0
+    for response in result.responses:
+        if response.round != current_round and response.round > 1:
+            lines.extend([f"# Round {response.round}", ""])
+        current_round = response.round
+        lines.extend([f"## {response.provider.title()}", "", response.content, ""])
+    if result.errors:
+        lines.extend(["## Errors", ""])
+        for error in result.errors:
+            lines.append(f"- `{error.provider}` — `{error.code}`: {error.message}")
+        lines.append("")
+    if result.chair:
+        lines.extend(
+            [
+                f"## Chair — {result.chair.chair.title()}",
+                "",
+                f"**Verdict:** `{result.chair.verdict}`",
+                "",
+                result.chair.recommendation,
+                "",
+            ]
+        )
+        if result.chair.agreed:
+            lines.extend(["**Agreed**", *[f"- {item}" for item in result.chair.agreed], ""])
+        if result.chair.dissent:
+            lines.extend(["**Dissent**", *[f"- {item}" for item in result.chair.dissent], ""])
+    return "\n".join(lines).rstrip() + "\n"

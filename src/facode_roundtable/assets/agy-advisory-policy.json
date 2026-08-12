@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "read_file(*)",
+      "write_file(*)",
+      "read_url(*)",
+      "execute_url(*)",
+      "command(*)",
+      "unsandboxed(*)",
+      "mcp(*)"
+    ]
+  },
+  "allowNonWorkspaceAccess": false,
+  "enableTerminalSandbox": true
+}
