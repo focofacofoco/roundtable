@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.base import InvocationResult, ProviderError, ProviderStatus
@@ -63,3 +64,118 @@ def test_research_excludes_provider_that_cannot_prove_web_only_mode():
     assert result.exit_code == ExitCode.INELIGIBLE
     assert result.errors[0].code == "research_ineligible"
     assert adapter.prompts == []
+
+
+def test_research_preserves_provider_reported_urls_as_typed_citations():
+    adapter = FakeAdapter(
+        "claude",
+        answer="The release is documented at https://example.com/release.",
+    )
+
+    result = asyncio.run(
+        RoundtableService({"claude": adapter}).ask(
+            "What changed?", heads=["claude"], research=True
+        )
+    )
+
+    assert [citation.url for citation in result.responses[0].citations] == [
+        "https://example.com/release"
+    ]
+    assert result.responses[0].citations[0].status == "provider_reported"
+
+
+def test_invocations_start_concurrently_but_results_keep_requested_order():
+    async def scenario():
+        started: set[str] = set()
+        both_started = asyncio.Event()
+
+        class BarrierAdapter(FakeAdapter):
+            async def invoke(self, prompt, *, timeout, model=None, research=False):
+                started.add(self.name)
+                if len(started) == 2:
+                    both_started.set()
+                await asyncio.wait_for(both_started.wait(), timeout=0.2)
+                return InvocationResult(f"{self.name} answer")
+
+        service = RoundtableService(
+            {
+                "claude": BarrierAdapter("claude"),
+                "codex": BarrierAdapter("codex"),
+            }
+        )
+        return await service.ask("Question", heads=["codex", "claude"], timeout=1)
+
+    result = asyncio.run(scenario())
+
+    assert [item.provider for item in result.responses] == ["codex", "claude"]
+    assert result.exit_code == ExitCode.OK
+
+
+def test_service_enforces_provider_timeout_and_keeps_fast_answer():
+    class HangingAdapter(FakeAdapter):
+        async def invoke(self, prompt, *, timeout, model=None, research=False):
+            await asyncio.Event().wait()
+
+    service = RoundtableService(
+        {
+            "codex": FakeAdapter("codex", answer="A"),
+            "claude": HangingAdapter("claude"),
+        }
+    )
+    started = time.perf_counter()
+
+    result = asyncio.run(
+        service.ask("Question", heads=["codex", "claude"], timeout=0.05)
+    )
+
+    assert time.perf_counter() - started < 1
+    assert result.successful_heads == ["codex"]
+    assert result.errors[0].code == "timeout"
+    assert result.exit_code == ExitCode.PARTIAL
+
+
+def test_cancelling_run_propagates_to_active_provider():
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class CancellableAdapter(FakeAdapter):
+            async def invoke(self, prompt, *, timeout, model=None, research=False):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        service = RoundtableService({"codex": CancellableAdapter("codex")})
+        task = asyncio.create_task(service.ask("Question", heads=["codex"], timeout=10))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("cancellation must propagate")
+        assert cancelled.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_status_failure_is_isolated_from_usable_provider():
+    broken = FakeAdapter("claude")
+
+    async def broken_status():
+        raise RuntimeError("status probe failed")
+
+    broken.status = broken_status
+    service = RoundtableService(
+        {"codex": FakeAdapter("codex", answer="A"), "claude": broken}
+    )
+
+    result = asyncio.run(service.ask("Question", heads=["codex", "claude"]))
+
+    assert result.successful_heads == ["codex"]
+    assert result.errors[0].code == "status_failed"
+    assert result.exit_code == ExitCode.PARTIAL

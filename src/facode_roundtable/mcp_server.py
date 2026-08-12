@@ -63,7 +63,7 @@ def create_server(*, service: RoundtableService) -> MCPServer:
             rounds=rounds,
             research=research,
             chair=chair,
-            timeout=timeout or (600 if research else 300),
+            timeout=timeout if timeout is not None else (600 if research else 300),
         )
         payload = result.to_dict()
         return CallToolResult(

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from mcp import Client
 
 from facode_roundtable.mcp_server import create_server
+from facode_roundtable.cli import main
 from facode_roundtable.models import ProviderError, ProviderResponse, RunResult
 
 
@@ -57,3 +59,33 @@ def test_mcp_exposes_three_tools_with_output_schemas():
 
     assert set(by_name) == {"roundtable_ask", "roundtable_providers", "roundtable_doctor"}
     assert all(tool.output_schema for tool in by_name.values())
+
+
+def test_cli_and_mcp_share_the_same_structured_run_contract(capsys):
+    service = FakeService()
+    assert main(
+        ["ask", "Question", "--heads", "codex", "--format", "json"],
+        service=service,
+    ) == 0
+    cli_payload = json.loads(capsys.readouterr().out)
+    mcp_result = asyncio.run(
+        call_tool(service, "roundtable_ask", {"question": "Question", "heads": ["codex"]})
+    )
+    mcp_payload = mcp_result.structured_content
+
+    comparable_fields = (
+        "schema_version",
+        "mode",
+        "question_hash",
+        "requested_heads",
+        "eligible_heads",
+        "successful_heads",
+        "failed_heads",
+        "provider_metadata",
+        "responses",
+        "errors",
+        "chair",
+    )
+    assert {key: cli_payload[key] for key in comparable_fields} == {
+        key: mcp_payload[key] for key in comparable_fields
+    }

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import re
 
+from facode_roundtable.models import Citation
 from facode_roundtable.models import ProviderError as ResultError
 from facode_roundtable.models import ProviderResponse, RunResult
 from facode_roundtable.providers.base import Adapter, InvocationResult, ProviderError, ProviderStatus
@@ -30,6 +32,8 @@ class RoundtableService:
             raise ValueError("question must not be empty")
         if not 1 <= rounds <= 3:
             raise ValueError("rounds must be between 1 and 3")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         if not heads or len(set(heads)) != len(heads):
             raise ValueError("heads must be a non-empty list without duplicates")
         unknown = [name for name in heads if name not in self.adapters]
@@ -37,7 +41,9 @@ class RoundtableService:
             raise ValueError(f"unknown provider: {unknown[0]}")
         prompt = _build_prompt(question, context or [])
         result = RunResult.create(question, heads, "research" if research else "advisory")
-        statuses = await asyncio.gather(*(self._safe_status(name) for name in heads))
+        statuses = await asyncio.gather(
+            *(self._safe_status(name, timeout=min(timeout, 20)) for name in heads)
+        )
         eligible: list[str] = []
         for name, status, error in statuses:
             if error:
@@ -84,17 +90,23 @@ class RoundtableService:
                         round=1,
                         model=invocation.model,
                         duration_ms=invocation.duration_ms,
-                        citations=invocation.citations,
+                        citations=(
+                            invocation.citations
+                            or (_reported_citations(invocation.content) if research else [])
+                        ),
                     )
                 )
         result.finish()
         return result
 
     async def _safe_status(
-        self, name: str
+        self, name: str, *, timeout: float
     ) -> tuple[str, ProviderStatus | None, ResultError | None]:
         try:
-            return name, await self.adapters[name].status(), None
+            status = await asyncio.wait_for(self.adapters[name].status(), timeout=timeout)
+            return name, status, None
+        except TimeoutError:
+            return name, None, ResultError(name, "timeout", "provider status timed out")
         except Exception:
             return name, None, ResultError(name, "status_failed", "provider status failed")
 
@@ -110,10 +122,15 @@ class RoundtableService:
     ) -> tuple[str, InvocationResult | None, ResultError | None]:
         try:
             async with semaphore:
-                invocation = await self.adapters[name].invoke(
-                    prompt, timeout=timeout, model=model, research=research
+                invocation = await asyncio.wait_for(
+                    self.adapters[name].invoke(
+                        prompt, timeout=timeout, model=model, research=research
+                    ),
+                    timeout=timeout,
                 )
             return name, invocation, None
+        except TimeoutError:
+            return name, None, ResultError(name, "timeout", "provider timed out", round=1)
         except ProviderError as exc:
             return name, None, ResultError(name, exc.code, str(exc), round=1)
         except Exception:
@@ -131,3 +148,12 @@ def _build_prompt(question: str, context: list[str]) -> str:
     if len(prompt.encode("utf-8")) > 1024 * 1024:
         raise ValueError("question and context exceed 1 MiB")
     return prompt
+
+
+def _reported_citations(content: str) -> list[Citation]:
+    urls: list[str] = []
+    for match in re.findall(r'https?://[^\s<>"\']+', content):
+        url = match.rstrip(".,;:!?)]}")
+        if url and url not in urls:
+            urls.append(url)
+    return [Citation(url=url) for url in urls]

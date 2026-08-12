@@ -83,6 +83,10 @@ class CommandRunner:
                     _elapsed(started),
                     True,
                 )
+            except asyncio.CancelledError:
+                await asyncio.shield(_terminate_tree(process))
+                await asyncio.shield(process.communicate())
+                raise
         return CommandResult(
             command,
             process.returncode,

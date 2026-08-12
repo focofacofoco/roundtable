@@ -13,6 +13,7 @@ from typing import Sequence
 from facode_roundtable import __version__
 from facode_roundtable.config import Config, ConfigError, config_path, load_config, save_config
 from facode_roundtable.mcp_server import serve
+from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
 from facode_roundtable.providers.gemini import GeminiAdapter
@@ -132,11 +133,18 @@ def main(
                 rounds=args.rounds,
                 chair=args.chair,
                 research=args.research,
-                timeout=args.timeout or (600 if args.research else 300),
+                timeout=(
+                    args.timeout
+                    if args.timeout is not None
+                    else (600 if args.research else 300)
+                ),
                 models=models,
                 context=context,
             )
         )
+    except KeyboardInterrupt:
+        print("roundtable: interrupted", file=sys.stderr)
+        return int(ExitCode.INTERRUPTED)
     except (OSError, ValueError) as exc:
         print(f"roundtable: {exc}", file=sys.stderr)
         return 2

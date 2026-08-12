@@ -28,7 +28,7 @@ class FakeStatusAdapter:
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.3.0\n"
+    assert capsys.readouterr().out == "roundtable 0.4.0\n"
 
 
 def test_default_service_exposes_exact_five_head_catalog():
@@ -54,6 +54,19 @@ def test_ask_json_writes_only_json_to_stdout(capsys):
     assert code == 0
     assert '"content": "CLI answer"' in captured.out
     assert captured.err == ""
+
+
+def test_cli_maps_keyboard_interrupt_to_typed_exit(monkeypatch, capsys):
+    def interrupt(coroutine):
+        coroutine.close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("facode_roundtable.cli.asyncio.run", interrupt)
+
+    code = main(["ask", "Question", "--heads", "codex"], service=FakeService())
+
+    assert code == 130
+    assert capsys.readouterr().err == "roundtable: interrupted\n"
 
 
 def test_providers_json_reports_sanitized_login_status(capsys):

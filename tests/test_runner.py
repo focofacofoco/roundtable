@@ -4,6 +4,8 @@ import asyncio
 import json
 import sys
 
+import pytest
+
 from facode_roundtable.runner import CommandRunner
 
 
@@ -62,3 +64,42 @@ def test_runner_returns_typed_timeout(tmp_path):
 
     assert result.timed_out is True
     assert result.returncode is None
+
+
+def test_runner_terminates_child_when_caller_cancels(monkeypatch):
+    class FakeProcess:
+        returncode = None
+
+        def __init__(self):
+            self.communicate_calls = 0
+
+        async def communicate(self, _input=None):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                await asyncio.Event().wait()
+            return b"", b""
+
+    process = FakeProcess()
+    terminated = False
+
+    async def create_process(*_args, **_kwargs):
+        return process
+
+    async def terminate_tree(_process):
+        nonlocal terminated
+        terminated = True
+
+    monkeypatch.setattr("facode_roundtable.runner.asyncio.create_subprocess_exec", create_process)
+    monkeypatch.setattr("facode_roundtable.runner._terminate_tree", terminate_tree)
+
+    async def scenario():
+        task = asyncio.create_task(CommandRunner().run(["fake"], timeout=10))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert terminated is True
+    assert process.communicate_calls == 2
