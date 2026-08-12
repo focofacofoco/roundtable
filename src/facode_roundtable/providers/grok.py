@@ -114,19 +114,29 @@ class GrokAdapter:
             timeout=20,
             environment=_LOGIN_ONLY_ENVIRONMENT,
         )
+        if result.returncode != 0 or result.timed_out:
+            return result, False
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
             return result, False
-        policy = (
-            _find(payload, "disable_api_key_auth") is True
-            or _find(payload, "disableApiKeyAuth") is True
+        return result, _policy_enforced(payload)
+
+
+def _policy_enforced(value: Any) -> bool:
+    if isinstance(value, dict):
+        configured = value.get(
+            "disable_api_key_auth", value.get("disableApiKeyAuth")
         )
-        enforced = (
-            _find(payload, "api_key_auth_disabled") is True
-            or _find(payload, "apiKeyAuthDisabled") is True
+        effective = value.get(
+            "api_key_auth_disabled", value.get("apiKeyAuthDisabled")
         )
-        return result, policy and enforced
+        if configured is True and effective is True:
+            return True
+        return any(_policy_enforced(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_policy_enforced(child) for child in value)
+    return False
 
 
 def _find(value: Any, key: str) -> Any:

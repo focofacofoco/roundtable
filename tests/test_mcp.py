@@ -7,19 +7,23 @@ from mcp import Client
 
 from facode_roundtable.mcp_server import create_server
 from facode_roundtable.cli import main
+from facode_roundtable.config import Config, ProviderConfig
 from facode_roundtable.models import ProviderError, ProviderResponse, RunResult
 
 
 class FakeService:
     def __init__(self, *, fail: bool = False):
         self.fail = fail
+        self.adapters = {"codex": object()}
+        self.calls: list[dict] = []
 
     async def ask(self, question, **kwargs):
+        self.calls.append(kwargs)
         result = RunResult.create(question, kwargs["heads"])
         result.eligible_heads = list(kwargs["heads"])
-        if self.fail:
+        if self.fail and kwargs["heads"]:
             result.errors.append(ProviderError(kwargs["heads"][0], "provider_failed", "failed", 1))
-        else:
+        elif kwargs["heads"]:
             result.responses.append(ProviderResponse(kwargs["heads"][0], "MCP answer", 1))
         result.finish()
         return result
@@ -89,3 +93,35 @@ def test_cli_and_mcp_share_the_same_structured_run_contract(capsys):
     assert {key: cli_payload[key] for key in comparable_fields} == {
         key: mcp_payload[key] for key in comparable_fields
     }
+
+
+def test_mcp_preserves_explicit_empty_heads_instead_of_expanding_to_all():
+    service = FakeService()
+
+    result = asyncio.run(
+        call_tool(service, "roundtable_ask", {"question": "Question", "heads": []})
+    )
+
+    assert service.calls[0]["heads"] == []
+    assert result.structured_content["requested_heads"] == []
+
+
+def test_mcp_uses_same_config_defaults_as_cli():
+    service = FakeService()
+    config = Config(
+        default_heads=["codex"],
+        chair="codex",
+        timeout_seconds=19,
+        providers={"codex": ProviderConfig(model="configured-model")},
+    )
+
+    async def invoke():
+        async with Client(create_server(service=service, config=config)) as client:
+            return await client.call_tool("roundtable_ask", {"question": "Question"})
+
+    asyncio.run(invoke())
+
+    assert service.calls[0]["heads"] == ["codex"]
+    assert service.calls[0]["chair"] == "codex"
+    assert service.calls[0]["timeout"] == 19
+    assert service.calls[0]["models"] == {"codex": "configured-model"}

@@ -5,6 +5,26 @@ import json
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
+_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "code_mode_host",
+    "computer_use",
+    "hooks",
+    "image_generation",
+    "multi_agent",
+    "plugins",
+    "remote_plugin",
+    "shell_tool",
+    "skill_search",
+    "tool_suggest",
+    "view_image",
+    "workspace_dependencies",
+)
+
+
 class CodexAdapter:
     name = "codex"
 
@@ -53,11 +73,13 @@ class CodexAdapter:
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
-            "--json",
         ]
+        for feature in _DISABLED_FEATURES:
+            argv.extend(["--disable", feature])
+        argv.extend(["--config", 'web_search="disabled"'])
         if model:
             argv.extend(["--model", model])
-        argv.append("-")
+        argv.extend(["--json", "-"])
         result = await self.runner.run(argv, input_text=prompt, timeout=timeout)
         if result.timed_out:
             raise ProviderError("timeout", "codex timed out")

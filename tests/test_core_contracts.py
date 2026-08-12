@@ -40,6 +40,18 @@ def test_config_rejects_unknown_provider_and_unknown_provider_field():
         )
 
 
+def test_config_rejects_disabled_defaults_unsafe_models_and_unbounded_timeouts():
+    with pytest.raises(ConfigError, match="default head is disabled"):
+        Config.from_dict({
+            "default_heads": ["codex"],
+            "providers": {"codex": {"enabled": False}},
+        })
+    with pytest.raises(ConfigError, match="safe model identifier"):
+        Config.from_dict({"providers": {"minimax": {"model": "model&whoami"}}})
+    with pytest.raises(ConfigError, match="between 1 and 3600"):
+        Config.from_dict({"timeout_seconds": 999999})
+
+
 def test_run_result_has_stable_public_shape_and_exit_semantics():
     result = RunResult.create("Why?", requested_heads=["codex", "claude"])
     result.eligible_heads = ["codex", "claude"]

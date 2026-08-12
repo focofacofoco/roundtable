@@ -53,6 +53,9 @@ OAuth/browser consent remains inside the official provider CLI. Roundtable never
 - Partial success exits `10`; no usable result exits `20`.
 - Runs are ephemeral by default. Only `--out` and `--save` persist output.
 - Provider identities, raw auth output and credentials are never retained.
+- Questions, context, peer answers and chair output are untrusted text; Roundtable never
+  executes them, but model-level prompt injection cannot be eliminated by delimiters.
+- The JSON contract is published at [`docs/run-result.schema.json`](docs/run-result.schema.json).
 
 ## MCP
 
@@ -75,6 +78,10 @@ roundtable uninstall
 
 ```text
 uv run --with pytest pytest
+uv run python scripts/check_reproducible_build.py
+uv run python scripts/soak.py --iterations 200
 ```
+
+CI runs the tests and build on Windows, macOS, and Linux with Python 3.11 and 3.14. Release gates additionally smoke-test the installed wheel, reproduce artifacts byte-for-byte, soak the orchestration core, and audit locked runtime dependencies.
 
 MIT. Forked from [frontier-infra/roundtable](https://github.com/frontier-infra/roundtable).

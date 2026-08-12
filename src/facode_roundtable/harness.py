@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from facode_roundtable.executables import resolve_cli
 from facode_roundtable.runner import sanitize_environment
 
 
@@ -19,7 +20,7 @@ _MCP_COMMANDS = {
         "remove": ["codex", "mcp", "remove", "roundtable"],
     },
     "claude": {
-        "get": ["claude", "mcp", "get", "roundtable"],
+        "get": ["claude", "mcp", "list"],
         "add": [
             "claude",
             "mcp",
@@ -68,7 +69,7 @@ class HarnessManager:
         components: dict[str, dict[str, Any]] = {}
         for provider in _MCP_COMMANDS:
             state = self._mcp_status(provider)
-            if not state["configured"]:
+            if not state["configured"] and state.get("reason") != "conflict":
                 added = self.command_runner(_MCP_COMMANDS[provider]["add"])
                 state = self._mcp_status(provider) if added.returncode == 0 else {
                     "configured": False,
@@ -123,7 +124,24 @@ class HarnessManager:
             return {"configured": False, "reason": "not_configured"}
         if provider == "codex":
             normalized = result.stdout.lower().replace("\r", "")
-            if "command: roundtable" not in normalized or "args: mcp serve" not in normalized:
+            fields = {
+                key.strip(): value.strip()
+                for line in normalized.splitlines()
+                if ":" in line
+                for key, value in [line.split(":", 1)]
+            }
+            if fields.get("command") != "roundtable" or fields.get("args") != "mcp serve":
+                return {"configured": False, "reason": "conflict"}
+        else:
+            normalized = result.stdout.lower().replace("\r", "")
+            matching = [
+                line
+                for line in normalized.splitlines()
+                if line.startswith("roundtable:")
+            ]
+            if len(matching) != 1 or not matching[0].startswith(
+                "roundtable: roundtable mcp serve - "
+            ):
                 return {"configured": False, "reason": "conflict"}
         return {"configured": True, "reason": None}
 
@@ -157,6 +175,7 @@ def _report(
     ok = all(
         item.get("configured") is expect_configured
         and (not expect_configured or item.get("current", True))
+        and item.get("reason") not in {"conflict", "install_failed", "remove_failed"}
         for item in components.values()
     )
     return {"action": action, "ok": ok, "components": components}
@@ -180,10 +199,13 @@ def _packaged_skill() -> str:
 
 
 def _is_roundtable_skill(content: str) -> bool:
-    return "name: roundtable" in content and any(
-        marker in content
-        for marker in ("roundtable ask", "API_KEY", "globally-installed `roundtable`")
-    )
+    if "name: roundtable" not in content:
+        return False
+    marker = "<!-- facode-roundtable-managed -->"
+    if marker in content:
+        return True
+    legacy = _packaged_skill().replace(f"{marker}\n", "", 1)
+    return content == legacy
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -199,9 +221,10 @@ def _atomic_write(path: Path, content: str) -> None:
 
 def _run_command(argv: list[str]) -> subprocess.CompletedProcess[str]:
     environment = sanitize_environment(os.environ)
+    command = [resolve_cli(argv[0]), *argv[1:]]
     try:
         return subprocess.run(
-            argv,
+            command,
             capture_output=True,
             text=True,
             timeout=30,
@@ -209,4 +232,4 @@ def _run_command(argv: list[str]) -> subprocess.CompletedProcess[str]:
             env=environment,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return subprocess.CompletedProcess(argv, 127, "", type(exc).__name__)
+        return subprocess.CompletedProcess(command, 127, "", type(exc).__name__)

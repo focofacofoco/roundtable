@@ -61,10 +61,14 @@ def test_codex_invocation_is_ephemeral_isolated_and_parses_json_events():
 
     assert response.content == "Codex answer"
     assert prompt == "Question"
-    assert argv == [
+    assert argv[:9] == [
         "codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-        "--skip-git-repo-check", "--sandbox", "read-only", "--json", "-",
+        "--skip-git-repo-check", "--sandbox", "read-only", "--disable",
     ]
+    disabled = {argv[index + 1] for index, value in enumerate(argv) if value == "--disable"}
+    assert {"shell_tool", "code_mode_host", "apps", "plugins", "multi_agent", "view_image"} <= disabled
+    assert ["--config", 'web_search="disabled"'] == argv[-4:-2]
+    assert argv[-2:] == ["--json", "-"]
 
 
 def test_claude_requires_first_party_login_and_invocation_disables_local_tools():
@@ -190,6 +194,38 @@ def test_grok_invocation_fails_closed_when_api_key_lockdown_is_not_observable():
     assert len(runner.calls) == 1
 
 
+def test_grok_rejects_policy_json_from_failed_or_timed_out_inspection():
+    payload = json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
+    }})
+    for inspection in (
+        CommandResult(tuple(), 1, payload, "failed", 1, False),
+        CommandResult(tuple(), None, payload, "", 1, True),
+    ):
+        runner = RecordingRunner([inspection])
+        try:
+            asyncio.run(GrokAdapter(runner).invoke("Question", timeout=20))
+        except Exception as error:
+            assert getattr(error, "code", None) == "api_key_auth_forbidden"
+        else:
+            raise AssertionError("failed policy inspection must fail closed")
+
+
+def test_grok_requires_both_lockdown_flags_in_the_same_policy_object():
+    inspection = result(json.dumps({
+        "configured": {"disableApiKeyAuth": True},
+        "effective": {"apiKeyAuthDisabled": True},
+    }))
+    runner = RecordingRunner([inspection])
+
+    try:
+        asyncio.run(GrokAdapter(runner).invoke("Question", timeout=20))
+    except Exception as error:
+        assert getattr(error, "code", None) == "api_key_auth_forbidden"
+    else:
+        raise AssertionError("split policy evidence must fail closed")
+
+
 def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
     status = asyncio.run(
         GeminiAdapter(
@@ -206,9 +242,11 @@ def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
     assert status.cli_version == "agy 1.1.12"
     assert status.research is False
     assert response.content == "Gemini answer"
-    assert prompt is None
-    assert argv[:5] == ["agy", "-p", "Question", "--output-format", "json"]
-    assert argv[5:] == ["--sandbox", "--mode", "plan", "--disable-slash-commands"]
+    assert prompt == "Question"
+    assert argv == [
+        "agy", "-p", "--output-format", "json", "--sandbox", "--mode", "plan",
+        "--disable-slash-commands",
+    ]
 
 
 def test_minimax_rejects_api_key_auth_and_uses_oauth_chat():

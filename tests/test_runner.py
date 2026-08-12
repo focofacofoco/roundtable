@@ -15,7 +15,7 @@ def test_runner_uses_disposable_cwd_and_scrubs_secret_environment(tmp_path):
         "import json, os, pathlib\n"
         "pathlib.Path('child-artifact').write_text('x')\n"
         "print(json.dumps({'cwd': os.getcwd(), 'secret': os.getenv('OPENAI_API_KEY'), "
-        "'safe': os.getenv('ROUNDTABLE_SAFE_TEST')}))\n",
+        "'unrelated': os.getenv('ROUNDTABLE_SAFE_TEST'), 'path': os.getenv('PATH')}))\n",
         encoding="utf-8",
     )
     runner = CommandRunner(base_environment={
@@ -29,7 +29,8 @@ def test_runner_uses_disposable_cwd_and_scrubs_secret_environment(tmp_path):
 
     assert result.returncode == 0
     assert payload["secret"] is None
-    assert payload["safe"] == "visible"
+    assert payload["unrelated"] is None
+    assert payload["path"] == "safe-path"
     assert not __import__("pathlib").Path(payload["cwd"]).exists()
 
 
@@ -70,17 +71,9 @@ def test_runner_terminates_child_when_caller_cancels(monkeypatch):
     class FakeProcess:
         returncode = None
 
-        def __init__(self):
-            self.communicate_calls = 0
-
-        async def communicate(self, _input=None):
-            self.communicate_calls += 1
-            if self.communicate_calls == 1:
-                await asyncio.Event().wait()
-            return b"", b""
-
     process = FakeProcess()
     terminated = False
+    communicating = False
 
     async def create_process(*_args, **_kwargs):
         return process
@@ -89,8 +82,16 @@ def test_runner_terminates_child_when_caller_cancels(monkeypatch):
         nonlocal terminated
         terminated = True
 
+    async def communicate_bounded(_process, _input, _limit):
+        nonlocal communicating
+        communicating = True
+        await asyncio.Event().wait()
+
     monkeypatch.setattr("facode_roundtable.runner.asyncio.create_subprocess_exec", create_process)
     monkeypatch.setattr("facode_roundtable.runner._terminate_tree", terminate_tree)
+    monkeypatch.setattr(
+        "facode_roundtable.runner._communicate_bounded", communicate_bounded
+    )
 
     async def scenario():
         task = asyncio.create_task(CommandRunner().run(["fake"], timeout=10))
@@ -102,14 +103,14 @@ def test_runner_terminates_child_when_caller_cancels(monkeypatch):
     asyncio.run(scenario())
 
     assert terminated is True
-    assert process.communicate_calls == 2
+    assert communicating is True
 
 
 def test_runner_redacts_environment_secrets_and_token_shaped_output(tmp_path):
     script = tmp_path / "emit_secrets.py"
     script.write_text(
         "import os\n"
-        "print('env=' + os.environ.get('SAFE_TEST_VALUE', ''))\n"
+        "print('database=' + str(os.environ.get('DATABASE_URL')))\n"
         "print('Authorization: Bearer abc.def.ghi')\n"
         "print('refresh_token=raw-refresh-secret')\n"
         "print('api_key: sk-examplevalue')\n"
@@ -118,7 +119,7 @@ def test_runner_redacts_environment_secrets_and_token_shaped_output(tmp_path):
     )
     runner = CommandRunner(
         base_environment={
-            "SAFE_TEST_VALUE": "not-sensitive",
+            "DATABASE_URL": "postgres://user:database-password@example.test/db",
             "OPENAI_API_KEY": "environment-secret-value",
         }
     )
@@ -126,8 +127,8 @@ def test_runner_redacts_environment_secrets_and_token_shaped_output(tmp_path):
     result = asyncio.run(runner.run([sys.executable, str(script)], timeout=10))
     combined = f"{result.stdout}\n{result.stderr}"
 
-    assert "not-sensitive" in combined
     for secret in (
+        "database-password",
         "environment-secret-value",
         "abc.def.ghi",
         "raw-refresh-secret",
@@ -136,6 +137,19 @@ def test_runner_redacts_environment_secrets_and_token_shaped_output(tmp_path):
     ):
         assert secret not in combined
     assert "[REDACTED]" in combined
+
+
+def test_runner_bounds_provider_output(tmp_path):
+    script = tmp_path / "large_output.py"
+    script.write_text("print('x' * 1024)\n", encoding="utf-8")
+
+    result = asyncio.run(
+        CommandRunner(max_output_bytes=128).run([sys.executable, str(script)], timeout=10)
+    )
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert result.stderr == "provider output exceeded 128 bytes"
 
 
 def test_workdir_cleanup_retries_transient_windows_handle(monkeypatch, tmp_path):

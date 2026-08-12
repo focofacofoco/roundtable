@@ -2,6 +2,7 @@
 name: roundtable
 description: Use when a decision benefits from independent frontier-model perspectives, web-backed research, cross-model deliberation, or a second opinion from Grok, Codex, Claude, Gemini, or MiniMax.
 ---
+<!-- facode-roundtable-managed -->
 
 # Roundtable
 

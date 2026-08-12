@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/focofacofoco/roundtable/blob/main/docs/run-result.schema.json",
+  "title": "Roundtable RunResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "mode",
+    "question_hash",
+    "started_at",
+    "requested_heads",
+    "eligible_heads",
+    "successful_heads",
+    "failed_heads",
+    "provider_metadata",
+    "responses",
+    "errors",
+    "chair",
+    "finished_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "format": "uuid"},
+    "mode": {"enum": ["advisory", "research", "deliberation"]},
+    "question_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "requested_heads": {"$ref": "#/$defs/heads"},
+    "eligible_heads": {"$ref": "#/$defs/heads"},
+    "successful_heads": {"$ref": "#/$defs/heads"},
+    "failed_heads": {"$ref": "#/$defs/heads"},
+    "provider_metadata": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/providerMetadata"}
+    },
+    "responses": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/response"}
+    },
+    "errors": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/error"}
+    },
+    "chair": {
+      "oneOf": [{"type": "null"}, {"$ref": "#/$defs/chair"}]
+    },
+    "finished_at": {
+      "oneOf": [{"type": "null"}, {"type": "string", "format": "date-time"}]
+    }
+  },
+  "$defs": {
+    "head": {"enum": ["codex", "claude", "grok", "gemini", "minimax"]},
+    "heads": {"type": "array", "items": {"$ref": "#/$defs/head"}, "uniqueItems": true},
+    "nullableString": {"type": ["string", "null"]},
+    "providerMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "installed", "eligible", "auth_method", "reason", "cli_version", "model", "research"],
+      "properties": {
+        "name": {"$ref": "#/$defs/head"},
+        "installed": {"type": "boolean"},
+        "eligible": {"type": "boolean"},
+        "auth_method": {"$ref": "#/$defs/nullableString"},
+        "reason": {"$ref": "#/$defs/nullableString"},
+        "cli_version": {"$ref": "#/$defs/nullableString"},
+        "model": {"$ref": "#/$defs/nullableString"},
+        "research": {"type": "boolean"}
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "title", "status"],
+      "properties": {
+        "url": {"type": "string", "format": "uri"},
+        "title": {"$ref": "#/$defs/nullableString"},
+        "status": {"type": "string"}
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "content", "round", "model", "duration_ms", "citations"],
+      "properties": {
+        "provider": {"$ref": "#/$defs/head"},
+        "content": {"type": "string", "minLength": 1},
+        "round": {"type": "integer", "minimum": 1, "maximum": 3},
+        "model": {"$ref": "#/$defs/nullableString"},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "citations": {"type": "array", "items": {"$ref": "#/$defs/citation"}}
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "code", "message", "round"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string"},
+        "round": {"type": ["integer", "null"], "minimum": 1, "maximum": 3}
+      }
+    },
+    "chair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chair", "verdict", "agreed", "dissent", "recommendation"],
+      "properties": {
+        "chair": {"type": "string", "minLength": 1},
+        "verdict": {"enum": ["CONSENSUS", "CONTINUE", "SPLIT", "INSUFFICIENT_EVIDENCE"]},
+        "agreed": {"$ref": "#/$defs/heads"},
+        "dissent": {"$ref": "#/$defs/heads"},
+        "recommendation": {"type": "string"}
+      }
+    }
+  }
+}

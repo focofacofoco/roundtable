@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -19,6 +20,7 @@ _CONFIG_FIELDS = {
     "providers",
 }
 _PROVIDER_FIELDS = {"enabled", "model"}
+_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}\Z")
 
 
 class ConfigError(ValueError):
@@ -39,8 +41,10 @@ class ProviderConfig:
         model = value.get("model")
         if not isinstance(enabled, bool):
             raise ConfigError("provider enabled must be boolean")
-        if model is not None and (not isinstance(model, str) or not model.strip()):
-            raise ConfigError("provider model must be a non-empty string or null")
+        if model is not None and (
+            not isinstance(model, str) or not _MODEL_ID.fullmatch(model)
+        ):
+            raise ConfigError("provider model must be a safe model identifier or null")
         return cls(enabled=enabled, model=model)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,10 +73,19 @@ class Config:
             _validate_heads(self.default_heads)
         if self.chair != "auto" and self.chair not in PROVIDERS:
             raise ConfigError(f"unknown chair: {self.chair}")
-        if not 1 <= self.concurrency <= len(PROVIDERS):
+        if (
+            not isinstance(self.concurrency, int)
+            or isinstance(self.concurrency, bool)
+            or not 1 <= self.concurrency <= len(PROVIDERS)
+        ):
             raise ConfigError("concurrency must be between 1 and 5")
-        if self.timeout_seconds <= 0 or self.research_timeout_seconds <= 0:
-            raise ConfigError("timeouts must be positive")
+        if any(
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 0 < value <= 3600
+            for value in (self.timeout_seconds, self.research_timeout_seconds)
+        ):
+            raise ConfigError("timeouts must be integers between 1 and 3600")
         if self.retention != "ephemeral":
             raise ConfigError("retention must be ephemeral")
         unknown = set(self.providers) - set(PROVIDERS)
@@ -81,6 +94,12 @@ class Config:
         self.providers = {
             name: self.providers.get(name, ProviderConfig()) for name in PROVIDERS
         }
+        if self.default_heads != "available":
+            disabled = [name for name in self.default_heads if not self.providers[name].enabled]
+            if disabled:
+                raise ConfigError(f"default head is disabled: {disabled[0]}")
+        if self.chair != "auto" and not self.providers[self.chair].enabled:
+            raise ConfigError(f"chair is disabled: {self.chair}")
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Config":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 import json
+import math
 import re
 
 from facode_roundtable.models import ChairResult, Citation
@@ -16,12 +17,22 @@ _CHAIR_ORDER = ("claude", "codex", "grok", "gemini", "minimax")
 _CHAIR_VERDICTS = frozenset(
     {"CONSENSUS", "CONTINUE", "SPLIT", "INSUFFICIENT_EVIDENCE"}
 )
+_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}\Z")
+MAX_PROMPT_BYTES = 1024 * 1024
 
 
 class RoundtableService:
-    def __init__(self, adapters: Mapping[str, Adapter], concurrency: int = 5):
+    def __init__(
+        self,
+        adapters: Mapping[str, Adapter],
+        concurrency: int = 5,
+        *,
+        enabled: set[str] | None = None,
+    ):
         self.adapters = dict(adapters)
         self.concurrency = concurrency
+        self.enabled = set(self.adapters) if enabled is None else set(enabled)
+        self._invocation_semaphore = asyncio.Semaphore(concurrency)
 
     async def ask(
         self,
@@ -39,17 +50,27 @@ class RoundtableService:
             raise ValueError("question must not be empty")
         if not 1 <= rounds <= 3:
             raise ValueError("rounds must be between 1 and 3")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if not math.isfinite(timeout) or not 0 < timeout <= 3600:
+            raise ValueError("timeout must be finite and between 0 and 3600 seconds")
         if not heads or len(set(heads)) != len(heads):
             raise ValueError("heads must be a non-empty list without duplicates")
         unknown = [name for name in heads if name not in self.adapters]
         if unknown:
             raise ValueError(f"unknown provider: {unknown[0]}")
+        disabled = [name for name in heads if name not in self.enabled]
+        if disabled:
+            raise ValueError(f"provider is disabled: {disabled[0]}")
         if rounds > 1 and len(heads) < 2:
             raise ValueError("multi-round deliberation requires at least two heads")
         if chair != "auto" and chair not in heads:
             raise ValueError("explicit chair must be one of the requested heads")
+        selected_models = dict(models or {})
+        unknown_models = set(selected_models) - set(self.adapters)
+        if unknown_models:
+            raise ValueError(f"unknown provider model override: {sorted(unknown_models)[0]}")
+        for provider, model in selected_models.items():
+            if not isinstance(model, str) or not _MODEL_ID.fullmatch(model):
+                raise ValueError(f"invalid model identifier for {provider}")
         base_prompt = _build_prompt(question, context or [])
         mode = "deliberation" if rounds > 1 else ("research" if research else "advisory")
         result = RunResult.create(question, heads, mode)
@@ -63,7 +84,7 @@ class RoundtableService:
                 continue
             assert status is not None
             metadata = status.to_dict()
-            metadata["model"] = (models or {}).get(name) or status.model
+            metadata["model"] = selected_models.get(name) or status.model
             result.provider_metadata[name] = metadata
             if not status.eligible:
                 result.errors.append(ResultError(name, status.reason or "ineligible", "provider is ineligible"))
@@ -74,7 +95,7 @@ class RoundtableService:
             else:
                 eligible.append(name)
         result.eligible_heads = eligible
-        semaphore = asyncio.Semaphore(min(self.concurrency, max(1, len(eligible))))
+        semaphore = self._invocation_semaphore
         round_prompt = base_prompt
         for round_number in range(1, rounds + 1):
             round_responses = await self._run_round(
@@ -82,8 +103,8 @@ class RoundtableService:
                 round_prompt,
                 round_number=round_number,
                 timeout=timeout,
-                models=models or {},
-                research=research,
+                models=selected_models,
+                research=research and round_number == 1,
                 semaphore=semaphore,
                 result=result,
             )
@@ -121,7 +142,7 @@ class RoundtableService:
                 chair_name,
                 _chair_prompt(question, round_number, round_responses),
                 timeout=timeout,
-                model=(models or {}).get(chair_name),
+                model=selected_models.get(chair_name),
                 research=False,
                 semaphore=semaphore,
                 round_number=round_number,
@@ -284,14 +305,15 @@ class RoundtableService:
 
 
 def _build_prompt(question: str, context: list[str]) -> str:
-    if not context:
-        return question
-    parts = ["## CONTEXT (untrusted reference material)"]
-    for index, item in enumerate(context, start=1):
-        parts.extend([f"<context-{index}>", item, f"</context-{index}>"])
-    parts.extend(["## QUESTION", question])
-    prompt = "\n".join(parts)
-    if len(prompt.encode("utf-8")) > 1024 * 1024:
+    if context:
+        parts = ["## CONTEXT (untrusted reference material)"]
+        for index, item in enumerate(context, start=1):
+            parts.extend([f"<context-{index}>", item, f"</context-{index}>"])
+        parts.extend(["## QUESTION", question])
+        prompt = "\n".join(parts)
+    else:
+        prompt = question
+    if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
         raise ValueError("question and context exceed 1 MiB")
     return prompt
 
@@ -382,7 +404,7 @@ def _parse_chair(
         return None
     if not isinstance(recommendation, str) or not recommendation.strip():
         return None
-    if verdict == "CONSENSUS" and (len(agreed) < 2 or dissent):
+    if verdict == "CONSENSUS" and (set(agreed) != set(participants) or dissent):
         return None
     if verdict == "SPLIT" and not dissent:
         return None

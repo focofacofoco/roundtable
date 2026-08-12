@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server import MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
-from facode_roundtable.config import config_path, load_config
+from facode_roundtable.config import Config, config_path, load_config
 from facode_roundtable.render import render_markdown
 from facode_roundtable.service import RoundtableService
 
@@ -40,7 +41,13 @@ class DoctorWire(BaseModel):
     providers: list[dict[str, Any]]
 
 
-def create_server(*, service: RoundtableService) -> MCPServer:
+def create_server(
+    *,
+    service: RoundtableService,
+    config: Config | None = None,
+    config_file: Path | None = None,
+) -> MCPServer:
+    effective = config or load_config(config_file)
     server = MCPServer(
         "facode-roundtable",
         instructions="Convene independent login-authenticated model CLIs; use rounds>1 for deliberation.",
@@ -52,18 +59,49 @@ def create_server(*, service: RoundtableService) -> MCPServer:
         heads: list[str] | None = None,
         rounds: int = 1,
         research: bool = False,
-        chair: str = "auto",
+        chair: str | None = None,
         timeout: float | None = None,
+        models: dict[str, str] | None = None,
     ) -> Annotated[CallToolResult, RunResultWire]:
         """Ask eligible Roundtable heads a question."""
-        selected = heads or list(service.adapters)
+        available = [
+            name
+            for name in service.adapters
+            if effective.providers[name].enabled
+        ]
+        if heads is None:
+            selected = (
+                available
+                if effective.default_heads == "available"
+                else list(effective.default_heads)
+            )
+        else:
+            selected = heads
+        disabled = [name for name in selected if name not in available]
+        if disabled:
+            raise ValueError(f"provider is disabled: {disabled[0]}")
+        configured_models = {
+            name: provider.model
+            for name, provider in effective.providers.items()
+            if provider.model is not None
+        }
+        configured_models.update(models or {})
         result = await service.ask(
             question,
             heads=selected,
             rounds=rounds,
             research=research,
-            chair=chair,
-            timeout=timeout if timeout is not None else (600 if research else 300),
+            chair=chair or effective.chair,
+            timeout=(
+                timeout
+                if timeout is not None
+                else (
+                    effective.research_timeout_seconds
+                    if research
+                    else effective.timeout_seconds
+                )
+            ),
+            models=configured_models,
         )
         payload = result.to_dict()
         return CallToolResult(
@@ -92,12 +130,12 @@ def create_server(*, service: RoundtableService) -> MCPServer:
         """Inspect local configuration and provider login status without inference."""
         valid = True
         try:
-            load_config()
+            load_config(config_file)
         except Exception:
             valid = False
         statuses = await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
         payload = {
-            "config_path": str(config_path()),
+            "config_path": str(config_file or config_path()),
             "config_valid": valid,
             "providers": [status.to_dict() for status in statuses],
         }
@@ -113,5 +151,12 @@ def create_server(*, service: RoundtableService) -> MCPServer:
     return server
 
 
-def serve(service: RoundtableService) -> None:
-    create_server(service=service).run(transport="stdio")
+def serve(
+    service: RoundtableService,
+    *,
+    config: Config | None = None,
+    config_file: Path | None = None,
+) -> None:
+    create_server(service=service, config=config, config_file=config_file).run(
+        transport="stdio"
+    )

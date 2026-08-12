@@ -37,15 +37,13 @@ class GeminiAdapter:
             raise ProviderError(
                 "research_ineligible", "gemini cannot enforce web-only tools in this CLI version"
             )
-        if len(prompt) > 24_000:
-            raise ProviderError("input_too_large", "gemini prompt exceeds the safe command-line limit")
         argv = [
-            self.executable, "-p", prompt, "--output-format", "json", "--sandbox", "--mode", "plan",
+            self.executable, "-p", "--output-format", "json", "--sandbox", "--mode", "plan",
             "--disable-slash-commands",
         ]
         if model:
             argv.extend(["--model", model])
-        result = await self.runner.run(argv, timeout=timeout)
+        result = await self.runner.run(argv, input_text=prompt, timeout=timeout)
         if result.timed_out:
             raise ProviderError("timeout", "gemini timed out")
         if result.returncode != 0:

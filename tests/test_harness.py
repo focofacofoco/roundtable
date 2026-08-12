@@ -15,11 +15,16 @@ class FakeCommands:
         self.calls.append(argv)
         provider = argv[0]
         command = argv[2]
-        if command == "get":
+        if command in {"get", "list"}:
+            output = (
+                "roundtable: roundtable mcp serve - connected\n"
+                if provider == "claude"
+                else "command: roundtable\nargs: mcp serve\n"
+            )
             return subprocess.CompletedProcess(
                 argv,
                 0 if provider in self.configured else 1,
-                "command: roundtable\nargs: mcp serve\n",
+                output,
                 "",
             )
         if command == "add":
@@ -72,24 +77,87 @@ def test_harness_install_status_remove_are_idempotent(tmp_path):
 
 
 def test_harness_replaces_known_legacy_roundtable_skill_but_preserves_custom_file(tmp_path):
+    current_skill = skill_source().read_text(encoding="utf-8")
     legacy = tmp_path / ".agents" / "skills" / "roundtable" / "SKILL.md"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text("---\nname: roundtable\n---\nUse XAI_API_KEY.\n", encoding="utf-8")
+    legacy.write_text(
+        current_skill.replace("<!-- facode-roundtable-managed -->\n", "", 1),
+        encoding="utf-8",
+    )
     custom = tmp_path / ".claude" / "skills" / "roundtable" / "SKILL.md"
     custom.parent.mkdir(parents=True)
     custom.write_text("custom instructions\n", encoding="utf-8")
     manager = HarnessManager(
         home=tmp_path,
         command_runner=FakeCommands(),
-        skill_text=skill_source().read_text(encoding="utf-8"),
+        skill_text=current_skill,
     )
 
     report = manager.install()
 
-    assert "XAI_API_KEY" not in legacy.read_text(encoding="utf-8")
+    assert "facode-roundtable-managed" in legacy.read_text(encoding="utf-8")
     assert custom.read_text(encoding="utf-8") == "custom instructions\n"
     assert report["ok"] is False
     assert report["components"]["claude_skill"]["reason"] == "conflict"
+
+
+def test_harness_rejects_extra_mcp_arguments_that_share_expected_prefix(tmp_path):
+    commands = FakeCommands()
+    commands.configured.update({"codex", "claude"})
+
+    def ambiguous_command(argv):
+        if argv[:3] == ["codex", "mcp", "get"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "command: roundtable\nargs: mcp serve --foreign\n", ""
+            )
+        if argv[:3] == ["claude", "mcp", "list"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "roundtable: roundtable mcp serve --foreign - connected\n", ""
+            )
+        return commands(argv)
+
+    manager = HarnessManager(
+        home=tmp_path,
+        command_runner=ambiguous_command,
+        skill_text=skill_source().read_text(encoding="utf-8"),
+    )
+
+    report = manager.remove()
+
+    assert report["ok"] is False
+    assert report["components"]["codex_mcp"]["reason"] == "conflict"
+    assert report["components"]["claude_mcp"]["reason"] == "conflict"
+    assert not [call for call in commands.calls if call[2] == "remove"]
+
+
+def test_harness_never_removes_foreign_claude_mcp_or_similarly_named_skill(tmp_path):
+    commands = FakeCommands()
+    commands.configured.add("claude")
+
+    def foreign_command(argv):
+        if argv[:3] == ["claude", "mcp", "list"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "roundtable: foreign-command - connected\n", ""
+            )
+        return commands(argv)
+
+    custom = tmp_path / ".claude" / "skills" / "roundtable" / "SKILL.md"
+    custom.parent.mkdir(parents=True)
+    custom.write_text(
+        "---\nname: roundtable\n---\nCustom roundtable ask API_KEY notes.\n",
+        encoding="utf-8",
+    )
+    manager = HarnessManager(
+        home=tmp_path,
+        command_runner=foreign_command,
+        skill_text=skill_source().read_text(encoding="utf-8"),
+    )
+
+    report = manager.remove()
+
+    assert report["ok"] is False
+    assert custom.exists()
+    assert not [call for call in commands.calls if call[2] == "remove"]
 
 
 def test_packaged_skill_is_login_only_and_uses_current_cli_contract():

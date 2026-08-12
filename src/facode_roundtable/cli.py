@@ -5,15 +5,14 @@ import asyncio
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 from typing import Sequence
 
 from facode_roundtable import __version__
 from facode_roundtable.config import Config, ConfigError, config_path, load_config, save_config
+from facode_roundtable.executables import resolve_cli
 from facode_roundtable.harness import HarnessManager
-from facode_roundtable.mcp_server import serve
 from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
@@ -22,7 +21,7 @@ from facode_roundtable.providers.grok import GrokAdapter
 from facode_roundtable.providers.minimax import MiniMaxAdapter
 from facode_roundtable.render import render_json, render_markdown
 from facode_roundtable.runner import CommandRunner, sanitize_environment
-from facode_roundtable.service import RoundtableService
+from facode_roundtable.service import MAX_PROMPT_BYTES, RoundtableService
 
 
 WINDOWS = os.name == "nt"
@@ -66,10 +65,10 @@ def _parser() -> argparse.ArgumentParser:
     ask = subparsers.add_parser("ask")
     ask.add_argument("question", nargs="?")
     ask.add_argument("-q", "--question", dest="question_flag")
-    ask.add_argument("-c", "--context", action="append", default=[])
-    ask.add_argument("--heads", default="codex,claude")
+    ask.add_argument("-c", "--context", action="append", type=Path, default=[])
+    ask.add_argument("--heads")
     ask.add_argument("--rounds", type=int, default=1)
-    ask.add_argument("--chair", default="auto")
+    ask.add_argument("--chair")
     ask.add_argument("--research", action="store_true")
     ask.add_argument("--timeout", type=float)
     ask.add_argument("--model", action="append", default=[])
@@ -79,7 +78,8 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def default_service() -> RoundtableService:
+def default_service(config: Config | None = None) -> RoundtableService:
+    effective = config or Config()
     runner = CommandRunner()
     return RoundtableService(
         {
@@ -88,25 +88,12 @@ def default_service() -> RoundtableService:
             "grok": GrokAdapter(runner, resolve_cli("grok")),
             "gemini": GeminiAdapter(runner, resolve_cli("agy")),
             "minimax": MiniMaxAdapter(runner, resolve_cli("mmx")),
-        }
+        },
+        concurrency=effective.concurrency,
+        enabled={
+            name for name, provider in effective.providers.items() if provider.enabled
+        },
     )
-
-
-def resolve_cli(
-    name: str, *, home: Path | None = None, local_app_data: Path | None = None
-) -> str:
-    detected = shutil.which(name)
-    if detected:
-        return detected
-    user_home = home or Path.home()
-    app_data = local_app_data or Path(os.environ.get("LOCALAPPDATA", user_home / "AppData" / "Local"))
-    executable = f"{name}.exe" if os.name == "nt" or name in {"grok", "agy"} else name
-    candidates = {
-        "grok": user_home / ".grok" / "bin" / executable,
-        "agy": app_data / "agy" / "bin" / executable,
-    }
-    candidate = candidates.get(name)
-    return str(candidate) if candidate and candidate.is_file() else name
 
 
 def main(
@@ -132,36 +119,53 @@ def main(
             print("roundtable: harness removal failed", file=sys.stderr)
             return 3
         return _tool_lifecycle("uninstall")
-    application = service or default_service()
+    if args.command == "config":
+        return _config(args, config_file)
+    if args.command == "doctor":
+        application = service or default_service()
+        return _doctor(application, as_json=args.json, live=args.live, path=config_file)
+    try:
+        effective_config = load_config(config_file)
+    except ConfigError as exc:
+        print(f"roundtable: {exc}", file=sys.stderr)
+        return 2
+    application = service or default_service(effective_config)
     if args.command == "providers":
         return _providers(application, as_json=args.json)
-    if args.command == "doctor":
-        return _doctor(application, as_json=args.json, live=args.live, path=config_file)
     if args.command == "auth":
         return _auth(application, args.auth_command, args.provider)
     if args.command == "models":
         return _list_models(args.provider)
-    if args.command == "config":
-        return _config(args, config_file)
     if args.command == "mcp":
-        serve(application)
+        from facode_roundtable.mcp_server import serve
+
+        serve(application, config=effective_config, config_file=config_file)
         return 0
     try:
         question = _question(args)
-        heads = [item.strip().lower() for item in args.heads.split(",") if item.strip()]
-        context = [path.read_text(encoding="utf-8") for path in args.context]
-        models = _models(args.model)
+        heads = _heads(args.heads, effective_config)
+        context = _read_context(args.context, question)
+        models = {
+            name: provider.model
+            for name, provider in effective_config.providers.items()
+            if provider.model is not None
+        }
+        models.update(_models(args.model))
         result = asyncio.run(
             application.ask(
                 question,
                 heads=heads,
                 rounds=args.rounds,
-                chair=args.chair,
+                chair=args.chair or effective_config.chair,
                 research=args.research,
                 timeout=(
                     args.timeout
                     if args.timeout is not None
-                    else (600 if args.research else 300)
+                    else (
+                        effective_config.research_timeout_seconds
+                        if args.research
+                        else effective_config.timeout_seconds
+                    )
                 ),
                 models=models,
                 context=context,
@@ -209,8 +213,8 @@ def _harness(manager: HarnessManager, action: str, *, as_json: bool) -> int:
 
 
 def _tool_lifecycle(action: str) -> int:
-    uv = shutil.which("uv")
-    if not uv:
+    uv = resolve_cli("uv")
+    if not Path(uv).is_file():
         print("roundtable: uv is required for this operation", file=sys.stderr)
         return 3
     if action == "update":
@@ -237,8 +241,10 @@ def _tool_lifecycle(action: str) -> int:
 
 
 def _schedule_windows_update(uv: str, source: str) -> int:
-    powershell = shutil.which("pwsh") or shutil.which("powershell")
-    if not powershell:
+    powershell = resolve_cli("pwsh")
+    if not Path(powershell).is_file():
+        powershell = resolve_cli("powershell")
+    if not Path(powershell).is_file():
         print("roundtable: PowerShell is required to update on Windows", file=sys.stderr)
         return 3
     helper = Path(__file__).with_name("update.ps1")
@@ -355,7 +361,11 @@ def _auth(service: RoundtableService, command: str, provider: str | None) -> int
 def _list_models(provider: str | None) -> int:
     if provider == "gemini":
         try:
-            return subprocess.run(["agy", "models"], check=False).returncode
+            return subprocess.run(
+                [resolve_cli("agy"), "models"],
+                check=False,
+                env=sanitize_environment(os.environ),
+            ).returncode
         except FileNotFoundError:
             return 3
     selected = [provider] if provider else ["codex", "claude", "grok", "gemini", "minimax"]
@@ -417,12 +427,48 @@ def _question(args: argparse.Namespace) -> str:
     if values:
         question = values[0]
     elif not sys.stdin.isatty():
-        question = sys.stdin.read()
+        question = sys.stdin.read(MAX_PROMPT_BYTES + 1)
     else:
         raise ValueError("question is required")
     if not question.strip():
         raise ValueError("question must not be empty")
     return question.strip()
+
+
+def _heads(value: str | None, config: Config) -> list[str]:
+    enabled = [
+        name for name, provider in config.providers.items() if provider.enabled
+    ]
+    if value is None:
+        selected = (
+            enabled
+            if config.default_heads == "available"
+            else list(config.default_heads)
+        )
+    else:
+        selected = [item.strip().lower() for item in value.split(",") if item.strip()]
+    disabled = [name for name in selected if name not in enabled]
+    if disabled:
+        raise ValueError(f"provider is disabled: {disabled[0]}")
+    return selected
+
+
+def _read_context(paths: list[Path], question: str) -> list[str]:
+    remaining = MAX_PROMPT_BYTES - len(question.encode("utf-8"))
+    if remaining < 0:
+        raise ValueError("question and context exceed 1 MiB")
+    context: list[str] = []
+    for path in paths:
+        with path.open("rb") as handle:
+            content = handle.read(remaining + 1)
+        if len(content) > remaining:
+            raise ValueError("question and context exceed 1 MiB")
+        try:
+            context.append(content.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"context file is not valid UTF-8: {path}") from exc
+        remaining -= len(content)
+    return context
 
 
 def _models(values: list[str]) -> dict[str, str]:

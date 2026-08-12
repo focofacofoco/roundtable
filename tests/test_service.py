@@ -5,7 +5,7 @@ import time
 
 from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.base import InvocationResult, ProviderError, ProviderStatus
-from facode_roundtable.service import RoundtableService
+from facode_roundtable.service import RoundtableService, _parse_chair
 
 
 class FakeAdapter:
@@ -14,12 +14,14 @@ class FakeAdapter:
         self.answer = answer
         self.failure = failure
         self.prompts: list[str] = []
+        self.research_flags: list[bool] = []
 
     async def status(self):
         return ProviderStatus(self.name, True, True, auth_method="test", research=True)
 
     async def invoke(self, prompt, *, timeout, model=None, research=False):
         self.prompts.append(prompt)
+        self.research_flags.append(research)
         if self.failure:
             raise ProviderError(self.failure, f"{self.name} failed")
         return InvocationResult(self.answer or f"{self.name} answer", model=model, duration_ms=1)
@@ -32,6 +34,7 @@ class ScriptedAdapter(FakeAdapter):
 
     async def invoke(self, prompt, *, timeout, model=None, research=False):
         self.prompts.append(prompt)
+        self.research_flags.append(research)
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
@@ -348,3 +351,108 @@ def test_provider_error_messages_are_redacted_before_public_output():
 
     assert "secret.token.value" not in result.errors[0].message
     assert "[REDACTED]" in result.errors[0].message
+
+
+def test_question_size_and_timeout_are_bounded_before_provider_status():
+    adapter = FakeAdapter("codex")
+
+    for question, timeout in [("x" * (1024 * 1024 + 1), 10), ("Question", float("inf"))]:
+        try:
+            asyncio.run(
+                RoundtableService({"codex": adapter}).ask(
+                    question, heads=["codex"], timeout=timeout
+                )
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unbounded request must be rejected before inference")
+    assert adapter.prompts == []
+
+
+def test_research_tools_are_disabled_after_the_independent_first_round():
+    codex = ScriptedAdapter("codex", ["C1", "C2"])
+    claude = ScriptedAdapter(
+        "claude",
+        [
+            "A1",
+            '{"verdict":"CONTINUE","agreed":[],"dissent":["codex","claude"],'
+            '"recommendation":"Continue."}',
+            "A2",
+            '{"verdict":"CONSENSUS","agreed":["codex","claude"],"dissent":[],'
+            '"recommendation":"Done."}',
+        ],
+    )
+
+    asyncio.run(
+        RoundtableService({"codex": codex, "claude": claude}).ask(
+            "Question", heads=["codex", "claude"], rounds=2, research=True
+        )
+    )
+
+    assert codex.research_flags == [True, False]
+    assert claude.research_flags == [True, False, False, False]
+
+
+def test_consensus_must_include_every_current_participant():
+    content = (
+        '{"verdict":"CONSENSUS","agreed":["codex","claude"],"dissent":[],'
+        '"recommendation":"Ship."}'
+    )
+
+    assert _parse_chair(content, "claude", ["codex", "claude", "grok"]) is None
+
+
+def test_model_overrides_reject_command_metacharacters_before_status():
+    adapter = FakeAdapter("minimax")
+
+    try:
+        asyncio.run(
+            RoundtableService({"minimax": adapter}).ask(
+                "Question", heads=["minimax"], models={"minimax": "model&whoami"}
+            )
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unsafe model identifier must be rejected")
+    assert adapter.prompts == []
+
+
+def test_disabled_provider_is_rejected_by_service_before_status():
+    adapter = FakeAdapter("codex")
+    service = RoundtableService({"codex": adapter}, enabled={"claude"})
+
+    try:
+        asyncio.run(service.ask("Question", heads=["codex"]))
+    except ValueError as error:
+        assert str(error) == "provider is disabled: codex"
+    else:
+        raise AssertionError("disabled provider must be rejected")
+    assert adapter.prompts == []
+
+
+def test_concurrency_limit_is_shared_across_parallel_requests():
+    async def scenario():
+        active = 0
+        maximum = 0
+
+        class CountingAdapter(FakeAdapter):
+            async def invoke(self, prompt, *, timeout, model=None, research=False):
+                nonlocal active, maximum
+                active += 1
+                maximum = max(maximum, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+                return InvocationResult("answer")
+
+        service = RoundtableService(
+            {"codex": CountingAdapter("codex")}, concurrency=1
+        )
+        await asyncio.gather(
+            service.ask("First", heads=["codex"]),
+            service.ask("Second", heads=["codex"]),
+        )
+        return maximum
+
+    assert asyncio.run(scenario()) == 1

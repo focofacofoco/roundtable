@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "facode-roundtable"
-version = "0.7.0"
+version = "0.8.0"
 description = "A login-only council of frontier model CLIs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["mcp>=2,<3"]
 
+[dependency-groups]
+dev = ["jsonschema>=4.26,<5", "pytest>=9,<10"]
+
 [project.scripts]
 roundtable = "facode_roundtable.cli:main"
 
@@ -38,6 +41,9 @@ packages = ["src/facode_roundtable"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+  "/.github",
+  "/docs",
+  "/scripts",
   "/src",
   "/tests",
   "/plugins",

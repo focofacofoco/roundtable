@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 
 from facode_roundtable.models import RunResult
+
+
+_OSC = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)", re.DOTALL)
+_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _terminal_safe(value: str) -> str:
+    return _CONTROL.sub("", _CSI.sub("", _OSC.sub("", value)))
 
 
 def render_json(result: RunResult) -> str:
@@ -16,11 +26,15 @@ def render_markdown(result: RunResult) -> str:
         if response.round != current_round and response.round > 1:
             lines.extend([f"# Round {response.round}", ""])
         current_round = response.round
-        lines.extend([f"## {response.provider.title()}", "", response.content, ""])
+        lines.extend(
+            [f"## {response.provider.title()}", "", _terminal_safe(response.content), ""]
+        )
     if result.errors:
         lines.extend(["## Errors", ""])
         for error in result.errors:
-            lines.append(f"- `{error.provider}` — `{error.code}`: {error.message}")
+            lines.append(
+                f"- `{error.provider}` — `{error.code}`: {_terminal_safe(error.message)}"
+            )
         lines.append("")
     if result.chair:
         lines.extend(
@@ -29,7 +43,7 @@ def render_markdown(result: RunResult) -> str:
                 "",
                 f"**Verdict:** `{result.chair.verdict}`",
                 "",
-                result.chair.recommendation,
+                _terminal_safe(result.chair.recommendation),
                 "",
             ]
         )
