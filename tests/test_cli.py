@@ -26,9 +26,28 @@ class FakeStatusAdapter:
         return ProviderStatus(self.name, True, True, auth_method="chatgpt")
 
 
+class FakeHarness:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.actions: list[str] = []
+
+    def _report(self, action):
+        self.actions.append(action)
+        return {"action": action, "ok": self.ok, "components": {}}
+
+    def status(self):
+        return self._report("status")
+
+    def install(self):
+        return self._report("install")
+
+    def remove(self):
+        return self._report("remove")
+
+
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.6.0\n"
+    assert capsys.readouterr().out == "roundtable 0.7.0\n"
 
 
 def test_default_service_exposes_exact_five_head_catalog():
@@ -105,3 +124,60 @@ def test_output_is_ephemeral_unless_explicitly_persisted(tmp_path, monkeypatch, 
     ) == 0
     assert target.read_text(encoding="utf-8").startswith("# Roundtable")
     assert not target.with_suffix(".tmp").exists()
+
+
+def test_harness_cli_returns_machine_readable_idempotent_report(capsys):
+    harness = FakeHarness()
+
+    code = main(["harness", "status", "--json"], harness_manager=harness)
+    payload = __import__("json").loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload == {"action": "status", "ok": True, "components": {}}
+    assert harness.actions == ["status"]
+
+
+def test_update_and_uninstall_use_uv_tool_lifecycle(monkeypatch, capsys):
+    calls: list[list[str]] = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return __import__("subprocess").CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
+    monkeypatch.setattr("facode_roundtable.cli.shutil.which", lambda name: f"C:/{name}.exe")
+    harness = FakeHarness()
+
+    assert main(["update"], harness_manager=harness) == 0
+    assert main(["uninstall"], harness_manager=harness) == 0
+    capsys.readouterr()
+
+    assert calls[0] == [
+        "C:/uv.exe",
+        "tool",
+        "install",
+        "--force",
+        "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip",
+    ]
+    assert calls[1] == ["C:/uv.exe", "tool", "uninstall", "facode-roundtable"]
+    assert harness.actions == ["remove"]
+
+
+def test_grok_login_uses_device_oauth_and_api_key_lockdown(monkeypatch):
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["environment"] = kwargs["env"]
+        return __import__("subprocess").CompletedProcess(argv, 0)
+
+    monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
+    monkeypatch.setattr(
+        "facode_roundtable.cli.resolve_cli", lambda name: f"resolved-{name}"
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+
+    assert main(["auth", "login", "grok"], service=FakeService()) == 0
+    assert captured["argv"] == ["resolved-grok", "login", "--device-auth"]
+    assert captured["environment"]["GROK_DISABLE_API_KEY_AUTH"] == "1"
+    assert "OPENAI_API_KEY" not in captured["environment"]

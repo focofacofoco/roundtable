@@ -12,6 +12,7 @@ from typing import Sequence
 
 from facode_roundtable import __version__
 from facode_roundtable.config import Config, ConfigError, config_path, load_config, save_config
+from facode_roundtable.harness import HarnessManager
 from facode_roundtable.mcp_server import serve
 from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.claude import ClaudeAdapter
@@ -20,7 +21,7 @@ from facode_roundtable.providers.gemini import GeminiAdapter
 from facode_roundtable.providers.grok import GrokAdapter
 from facode_roundtable.providers.minimax import MiniMaxAdapter
 from facode_roundtable.render import render_json, render_markdown
-from facode_roundtable.runner import CommandRunner
+from facode_roundtable.runner import CommandRunner, sanitize_environment
 from facode_roundtable.service import RoundtableService
 
 
@@ -28,6 +29,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="roundtable")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version")
+    subparsers.add_parser("update")
+    subparsers.add_parser("uninstall")
+    harness = subparsers.add_parser("harness")
+    harness_subparsers = harness.add_subparsers(dest="harness_command", required=True)
+    for command in ("status", "install", "remove"):
+        harness_parser = harness_subparsers.add_parser(command)
+        harness_parser.add_argument("--json", action="store_true")
     providers = subparsers.add_parser("providers")
     providers.add_argument("--json", action="store_true")
     doctor = subparsers.add_parser("doctor")
@@ -102,11 +110,24 @@ def main(
     *,
     service: RoundtableService | None = None,
     config_file: Path | None = None,
+    harness_manager: HarnessManager | None = None,
 ) -> int:
     args = _parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "version":
         print(f"roundtable {__version__}")
         return 0
+    if args.command == "harness":
+        manager = harness_manager or HarnessManager()
+        return _harness(manager, args.harness_command, as_json=args.json)
+    if args.command == "update":
+        return _tool_lifecycle("update")
+    if args.command == "uninstall":
+        manager = harness_manager or HarnessManager()
+        report = manager.remove()
+        if not report["ok"]:
+            print("roundtable: harness removal failed", file=sys.stderr)
+            return 3
+        return _tool_lifecycle("uninstall")
     application = service or default_service()
     if args.command == "providers":
         return _providers(application, as_json=args.json)
@@ -170,6 +191,45 @@ def _providers(service: RoundtableService, *, as_json: bool) -> int:
     return 0
 
 
+def _harness(manager: HarnessManager, action: str, *, as_json: bool) -> int:
+    report = getattr(manager, action)()
+    if as_json:
+        print(json.dumps(report, indent=2))
+    else:
+        for name, state in report["components"].items():
+            configured = state.get("configured", False)
+            current = state.get("current", True)
+            label = "ready" if configured and current else state.get("reason", "not_configured")
+            print(f"{name}: {label}")
+    return 0 if report["ok"] else 3
+
+
+def _tool_lifecycle(action: str) -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        print("roundtable: uv is required for this operation", file=sys.stderr)
+        return 3
+    if action == "update":
+        argv = [
+            uv,
+            "tool",
+            "install",
+            "--force",
+            "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip",
+        ]
+    else:
+        argv = [uv, "tool", "uninstall", "facode-roundtable"]
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            env=sanitize_environment(os.environ),
+        ).returncode
+    except FileNotFoundError:
+        print("roundtable: uv is not available", file=sys.stderr)
+        return 3
+
+
 async def _statuses(service: RoundtableService):
     return await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
 
@@ -223,21 +283,23 @@ def _auth(service: RoundtableService, command: str, provider: str | None) -> int
         ("codex", "logout"): ["codex", "logout"],
         ("claude", "login"): ["claude", "auth", "login"],
         ("claude", "logout"): ["claude", "auth", "logout"],
-        ("grok", "login"): ["grok", "login"],
+        ("grok", "login"): ["grok", "login", "--device-auth"],
         ("grok", "logout"): ["grok", "logout"],
         ("gemini", "login"): ["agy"],
-        ("minimax", "login"): ["mmx", "auth", "login", "--recommend"],
+        ("minimax", "login"): [
+            "mmx", "auth", "login", "--recommend", "--region=global",
+        ],
         ("minimax", "logout"): ["mmx", "auth", "logout"],
     }
     argv = commands.get((provider or "", command))
     if not argv:
         print(f"roundtable: {command} is not automatable for {provider}", file=sys.stderr)
         return 3
-    environment = {
-        name: value
-        for name, value in os.environ.items()
-        if not any(marker in name.upper() for marker in ("API_KEY", "TOKEN", "SECRET", "PASSWORD"))
-    }
+    executable_names = {"gemini": "agy", "minimax": "mmx"}
+    argv[0] = resolve_cli(executable_names.get(provider or "", provider or ""))
+    environment = sanitize_environment(os.environ)
+    if provider == "grok":
+        environment["GROK_DISABLE_API_KEY_AUTH"] = "1"
     try:
         return subprocess.run(argv, env=environment, check=False).returncode
     except FileNotFoundError:

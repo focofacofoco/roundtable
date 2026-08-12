@@ -5,7 +5,8 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-uv tool install facode-roundtable
+uv tool install "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip"
+roundtable harness install
 ```
 
 From this repository:
@@ -15,6 +16,8 @@ uv tool install .
 ```
 
 The package is user-global. It does not install anything into projects you consult.
+
+`harness install` idempotently registers the stdio MCP server in Codex and Claude and installs the login-only agent skill. Inspect or remove those integrations with `roundtable harness status` and `roundtable harness remove`.
 
 ## Providers
 
@@ -31,6 +34,7 @@ GLM is intentionally unsupported until an official login-authenticated headless 
 ```text
 roundtable providers
 roundtable auth status
+roundtable auth login grok
 roundtable doctor
 roundtable ask "Which option has the strongest evidence?"
 roundtable ask -q "..." --heads codex,claude --format json
@@ -39,6 +43,8 @@ roundtable ask -q "..." --research
 ```
 
 Research is fail-closed. A provider participates only when Roundtable can constrain it to web tools while denying local file, command and MCP tools.
+
+OAuth/browser consent remains inside the official provider CLI. Roundtable never receives or stores the resulting credentials. A provider stays ineligible until `roundtable providers` can prove the supported first-party login method.
 
 ## Output and privacy
 
@@ -55,6 +61,15 @@ roundtable mcp serve
 ```
 
 Tools: `roundtable_ask`, `roundtable_providers`, and `roundtable_doctor`. The server uses the official MCP Python SDK and returns both model-readable text and structured output.
+
+## Lifecycle
+
+```text
+roundtable update
+roundtable uninstall
+```
+
+`update` reinstalls the current fork from GitHub through `uv`. `uninstall` first removes the exact Roundtable MCP/skill integrations, then removes the global tool. Neither command touches provider logins.
 
 ## Development
 

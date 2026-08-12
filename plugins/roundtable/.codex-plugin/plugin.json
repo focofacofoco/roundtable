@@ -1,0 +1,28 @@
+{
+  "name": "roundtable",
+  "version": "0.7.0",
+  "description": "Login-only multi-model advice and deliberation through official CLIs.",
+  "author": {
+    "name": "Facode",
+    "url": "https://github.com/focofacofoco"
+  },
+  "homepage": "https://github.com/focofacofoco/roundtable",
+  "repository": "https://github.com/focofacofoco/roundtable",
+  "license": "MIT",
+  "keywords": ["roundtable", "council", "consensus", "multi-model", "deliberation"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Roundtable",
+    "shortDescription": "Convene login-only model CLIs",
+    "longDescription": "Get independent advice, research, and strictly chaired deliberation from installed official model CLIs.",
+    "developerName": "Facode",
+    "category": "Productivity",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/focofacofoco/roundtable",
+    "defaultPrompt": [
+      "Convene a roundtable for this decision.",
+      "Ask Codex and Claude for independent views.",
+      "Run a two-round deliberation on this question."
+    ]
+  }
+}

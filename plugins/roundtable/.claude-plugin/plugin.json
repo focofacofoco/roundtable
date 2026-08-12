@@ -1,14 +1,14 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "roundtable",
-  "version": "0.1.0",
-  "description": "Convene a round table of frontier AI models — Grok, Codex/OpenAI, GLM, MiniMax, Claude, and Gemini — for independent perspectives and chaired deliberation to consensus. Drives the globally-installed `roundtable` CLI (install: curl -fsSL https://roundtable.sh/install.sh | bash).",
+  "version": "0.7.0",
+  "description": "Login-only multi-model advice and deliberation through official CLIs.",
   "author": {
-    "name": "Frontier Infra",
-    "url": "https://frontierinfra.org"
+    "name": "Facode",
+    "url": "https://github.com/focofacofoco"
   },
-  "homepage": "https://roundtable.sh",
-  "repository": "https://github.com/frontier-infra/roundtable",
+  "homepage": "https://github.com/focofacofoco/roundtable",
+  "repository": "https://github.com/focofacofoco/roundtable",
   "license": "MIT",
-  "keywords": ["roundtable", "council", "consensus", "multi-model", "deliberation", "ai", "grok", "codex", "gemini"]
+  "keywords": ["roundtable", "council", "consensus", "multi-model", "deliberation", "grok", "codex", "gemini"]
 }
