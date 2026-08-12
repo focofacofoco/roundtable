@@ -21,6 +21,7 @@ from facode_roundtable.config import (
 )
 from facode_roundtable.executables import resolve_cli
 from facode_roundtable.harness import HarnessManager
+from facode_roundtable.lifecycle import ReleaseUpdater
 from facode_roundtable.models import ExitCode
 from facode_roundtable.providers.base import Runner
 from facode_roundtable.providers.claude import ClaudeAdapter
@@ -33,8 +34,6 @@ from facode_roundtable.runner import CommandResult, CommandRunner, sanitize_envi
 from facode_roundtable.service import MAX_PROMPT_BYTES, RoundtableService
 
 
-WINDOWS = os.name == "nt"
-_UPDATE_SOURCE = "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip"
 _MODEL_ID = r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}"
 _BULLET_MODEL = re.compile(
     rf"^\s*[*-]\s+(?P<model>{_MODEL_ID})(?:\s+\(default\))?\s*$"
@@ -137,7 +136,15 @@ def main(
         manager = harness_manager or HarnessManager()
         return _harness(manager, args.harness_command, as_json=args.json)
     if args.command == "update":
-        return _tool_lifecycle("update")
+        try:
+            update_config = load_config(config_file)
+        except ConfigError as exc:
+            print(f"roundtable: {exc}", file=sys.stderr)
+            return 2
+        return ReleaseUpdater(
+            channel=update_config.update_channel,
+            installed_version=__version__,
+        ).run()
     if args.command == "uninstall":
         manager = harness_manager or HarnessManager()
         report = manager.remove()
@@ -251,18 +258,7 @@ def _tool_lifecycle(action: str) -> int:
     if not Path(uv).is_file():
         print("roundtable: uv is required for this operation", file=sys.stderr)
         return 3
-    if action == "update":
-        if WINDOWS:
-            return _schedule_windows_update(uv, _UPDATE_SOURCE)
-        argv = [
-            uv,
-            "tool",
-            "install",
-            "--force",
-            _UPDATE_SOURCE,
-        ]
-    else:
-        argv = [uv, "tool", "uninstall", "facode-roundtable"]
+    argv = [uv, "tool", "uninstall", "facode-roundtable"]
     try:
         return subprocess.run(
             argv,
@@ -272,49 +268,6 @@ def _tool_lifecycle(action: str) -> int:
     except FileNotFoundError:
         print("roundtable: uv is not available", file=sys.stderr)
         return 3
-
-
-def _schedule_windows_update(uv: str, source: str) -> int:
-    powershell = resolve_cli("pwsh")
-    if not Path(powershell).is_file():
-        powershell = resolve_cli("powershell")
-    if not Path(powershell).is_file():
-        print("roundtable: PowerShell is required to update on Windows", file=sys.stderr)
-        return 3
-    helper = Path(__file__).with_name("update.ps1")
-    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-        subprocess, "CREATE_NO_WINDOW", 0
-    )
-    try:
-        subprocess.Popen(
-            [
-                powershell,
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(helper),
-                "-ParentProcessId",
-                str(os.getpid()),
-                "-UvPath",
-                uv,
-                "-Source",
-                source,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-            close_fds=True,
-        )
-    except OSError:
-        print("roundtable: failed to schedule update", file=sys.stderr)
-        return 3
-    print("roundtable: update scheduled; it will start after this process exits")
-    return 0
-
-
 async def _statuses(service: RoundtableService):
     return await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
 

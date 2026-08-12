@@ -26,6 +26,11 @@ def resolve_cli(
         "grok": [user_home / ".grok" / "bin" / f"grok{suffix}"],
         "agy": [app_data / "agy" / "bin" / f"agy{suffix}"],
         "uv": [user_home / ".local" / "bin" / f"uv{suffix}"],
+        "gh": [
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+            / "GitHub CLI"
+            / f"gh{suffix}",
+        ],
     }
     for candidate in candidates.get(name, []):
         if candidate.is_file():

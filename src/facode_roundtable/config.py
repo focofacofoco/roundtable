@@ -17,6 +17,7 @@ _CONFIG_FIELDS = {
     "timeout_seconds",
     "research_timeout_seconds",
     "retention",
+    "update_channel",
     "providers",
 }
 _PROVIDER_FIELDS = {"enabled", "model", "effort"}
@@ -67,8 +68,8 @@ class ProviderConfig:
 
 
 _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
-    "codex": {"model": "gpt-5.6-sol", "effort": "xhigh"},
-    "claude": {"model": "claude-opus-5", "effort": "xhigh"},
+    "codex": {"model": "gpt-5.6-sol", "effort": "high"},
+    "claude": {"model": "claude-opus-5", "effort": "high"},
 }
 
 
@@ -82,18 +83,19 @@ def _default_providers() -> dict[str, ProviderConfig]:
 
 @dataclass(slots=True)
 class Config:
-    schema_version: int = 2
+    schema_version: int = 3
     default_heads: str | list[str] = "available"
     chair: str = "auto"
     concurrency: int = 5
     timeout_seconds: int = 300
     research_timeout_seconds: int = 600
     retention: str = "ephemeral"
+    update_channel: str = "beta"
     providers: dict[str, ProviderConfig] = field(default_factory=_default_providers)
 
     def __post_init__(self) -> None:
-        if self.schema_version != 2:
-            raise ConfigError("schema_version must be 2")
+        if self.schema_version != 3:
+            raise ConfigError("schema_version must be 3")
         if self.default_heads != "available":
             if not isinstance(self.default_heads, list) or not self.default_heads:
                 raise ConfigError("default_heads must be 'available' or a non-empty list")
@@ -115,6 +117,8 @@ class Config:
             raise ConfigError("timeouts must be integers between 1 and 3600")
         if self.retention != "ephemeral":
             raise ConfigError("retention must be ephemeral")
+        if not isinstance(self.update_channel, str) or self.update_channel not in {"beta", "stable"}:
+            raise ConfigError("update_channel must be beta or stable")
         unknown = set(self.providers) - set(PROVIDERS)
         if unknown:
             raise ConfigError(f"unknown provider: {sorted(unknown)[0]}")
@@ -161,9 +165,9 @@ class Config:
         if (
             not isinstance(schema_version, int)
             or isinstance(schema_version, bool)
-            or schema_version not in {1, 2}
+            or schema_version not in {1, 2, 3}
         ):
-            raise ConfigError("schema_version must be 1 or 2")
+            raise ConfigError("schema_version must be 1, 2, or 3")
         providers = {}
         for name in PROVIDERS:
             values = default_provider_config(name).to_dict()
@@ -177,10 +181,16 @@ class Config:
                 and raw_provider.get("model") is None
             ):
                 raw_provider.pop("model", None)
+            if (
+                schema_version == 2
+                and raw_provider.get("model") == _PROVIDER_DEFAULTS.get(name, {}).get("model")
+                and raw_provider.get("effort") == "xhigh"
+            ):
+                raw_provider["effort"] = "high"
             values.update(raw_provider)
             providers[name] = ProviderConfig.from_dict(values)
         kwargs = {key: val for key, val in value.items() if key != "providers"}
-        kwargs["schema_version"] = 2
+        kwargs["schema_version"] = 3
         return cls(providers=providers, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -192,6 +202,7 @@ class Config:
             "timeout_seconds": self.timeout_seconds,
             "research_timeout_seconds": self.research_timeout_seconds,
             "retention": self.retention,
+            "update_channel": self.update_channel,
             "providers": {name: config.to_dict() for name, config in self.providers.items()},
         }
 

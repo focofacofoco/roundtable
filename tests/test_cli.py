@@ -67,7 +67,7 @@ def command_result(stdout="", stderr="", returncode=0, *, timed_out=False):
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.8.1\n"
+    assert capsys.readouterr().out == "roundtable 0.9.0\n"
 
 
 def test_lightweight_cli_import_does_not_load_mcp_sdk():
@@ -86,9 +86,9 @@ def test_default_service_exposes_exact_five_head_catalog():
 
     assert tuple(service.adapters) == ("codex", "claude", "grok", "gemini", "minimax")
     assert service.adapters["codex"].default_model == "gpt-5.6-sol"
-    assert service.adapters["codex"].default_effort == "xhigh"
+    assert service.adapters["codex"].default_effort == "high"
     assert service.adapters["claude"].default_model == "claude-opus-5"
-    assert service.adapters["claude"].default_effort == "xhigh"
+    assert service.adapters["claude"].default_effort == "high"
 
 
 def test_cli_resolution_finds_official_user_install_before_shell_restart(tmp_path, monkeypatch):
@@ -191,35 +191,83 @@ def test_harness_cli_returns_machine_readable_idempotent_report(capsys):
     assert harness.actions == ["status"]
 
 
-def test_update_and_uninstall_use_uv_tool_lifecycle(monkeypatch, capsys, tmp_path):
-    calls: list[list[str]] = []
-    scheduled: list[tuple[str, str]] = []
+def test_cli_surface_is_frozen():
+    import argparse
+    from facode_roundtable.cli import _parser
 
-    def run(argv, **_kwargs):
-        calls.append(argv)
-        return __import__("subprocess").CompletedProcess(argv, 0, "", "")
+    def manifest(parser):
+        result = {"arguments": {}, "commands": {}}
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                result["commands"] = {
+                    name: manifest(child) for name, child in action.choices.items()
+                }
+            elif action.dest != "help":
+                result["arguments"][action.dest] = {
+                    "options": action.option_strings,
+                    "nargs": action.nargs,
+                    "required": action.required,
+                }
+        return result
 
-    monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
-    uv = tmp_path / "uv.exe"
-    uv.touch()
-    monkeypatch.setattr("facode_roundtable.cli.resolve_cli", lambda _name: str(uv))
-    monkeypatch.setattr("facode_roundtable.cli.WINDOWS", True)
-    monkeypatch.setattr(
-        "facode_roundtable.cli._schedule_windows_update",
-        lambda uv, source: scheduled.append((uv, source)) or 0,
+    surface = manifest(_parser())
+
+    assert tuple(surface["commands"]) == (
+        "version", "update", "uninstall", "harness", "providers", "doctor",
+        "auth", "models", "config", "mcp", "ask",
     )
-    harness = FakeHarness()
-
-    assert main(["update"], harness_manager=harness) == 0
-    assert main(["uninstall"], harness_manager=harness) == 0
-    capsys.readouterr()
-
-    assert scheduled == [(
-        str(uv),
-        "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip",
-    )]
-    assert calls[0] == [str(uv), "tool", "uninstall", "facode-roundtable"]
-    assert harness.actions == ["remove"]
+    assert tuple(surface["commands"]["harness"]["commands"]) == (
+        "status", "install", "remove",
+    )
+    assert tuple(surface["commands"]["auth"]["commands"]) == (
+        "status", "login", "logout",
+    )
+    assert tuple(surface["commands"]["config"]["commands"]) == (
+        "show", "path", "reset", "set",
+    )
+    assert tuple(surface["commands"]["mcp"]["commands"]) == ("serve",)
+    assert tuple(surface["commands"]["ask"]["arguments"]) == (
+        "question", "question_flag", "context", "heads", "rounds", "chair",
+        "research", "timeout", "model", "format", "out", "save",
+    )
+    expected_arguments = {
+        ("harness", "status"): {"json": ("--json",)},
+        ("harness", "install"): {"json": ("--json",)},
+        ("harness", "remove"): {"json": ("--json",)},
+        ("providers",): {"json": ("--json",)},
+        ("doctor",): {"live": ("--live",), "json": ("--json",)},
+        ("auth", "status"): {"provider": ()},
+        ("auth", "login"): {"provider": ()},
+        ("auth", "logout"): {"provider": ()},
+        ("models",): {"provider": ()},
+        ("config", "set"): {"field": (), "value": ()},
+        ("ask",): {
+            "question": (), "question_flag": ("-q", "--question"),
+            "context": ("-c", "--context"), "heads": ("--heads",),
+            "rounds": ("--rounds",), "chair": ("--chair",),
+            "research": ("--research",), "timeout": ("--timeout",),
+            "model": ("--model",), "format": ("--format",),
+            "out": ("--out",), "save": ("--save",),
+        },
+    }
+    for path, expected in expected_arguments.items():
+        node = surface
+        for command in path:
+            node = node["commands"][command]
+        assert {
+            name: tuple(details["options"])
+            for name, details in node["arguments"].items()
+        } == expected
+    empty_argument_paths = (
+        (), ("version",), ("update",), ("uninstall",), ("harness",),
+        ("auth",), ("config",), ("config", "show"), ("config", "path"),
+        ("config", "reset"), ("mcp",), ("mcp", "serve"),
+    )
+    for path in empty_argument_paths:
+        node = surface
+        for command in path:
+            node = node["commands"][command]
+        assert node["arguments"] == {}
 
 
 def test_grok_login_uses_device_oauth_and_api_key_lockdown(monkeypatch):
@@ -268,7 +316,7 @@ def test_codex_model_discovery_uses_official_catalog_and_hides_internal_models(
 
     assert runner.calls == [(["resolved-codex", "debug", "models"], None, 20, None)]
     assert capsys.readouterr().out == (
-        "codex: default=gpt-5.6-sol effort=xhigh discovery=official-cli\n"
+        "codex: default=gpt-5.6-sol effort=high discovery=official-cli\n"
         "  gpt-5.6-sol\n"
         "  gpt-5.6-terra\n"
     )
@@ -281,7 +329,7 @@ def test_claude_models_reports_effective_defaults_without_fabricated_catalog(cap
 
     assert runner.calls == []
     assert capsys.readouterr().out == (
-        "claude: default=claude-opus-5 effort=xhigh "
+        "claude: default=claude-opus-5 effort=high "
         "discovery=unsupported-by-cli\n"
     )
 

@@ -25,11 +25,13 @@ def test_config_has_single_source_defaults_for_codex_and_claude():
     config = Config()
 
     assert config.providers["codex"].model == "gpt-5.6-sol"
-    assert config.providers["codex"].effort == "xhigh"
+    assert config.providers["codex"].effort == "high"
     assert config.providers["claude"].model == "claude-opus-5"
-    assert config.providers["claude"].effort == "xhigh"
+    assert config.providers["claude"].effort == "high"
     assert config.providers["grok"].model is None
     assert config.providers["grok"].effort is None
+    assert config.schema_version == 3
+    assert config.update_channel == "beta"
 
 
 def test_partial_provider_config_inherits_defaults_and_allows_explicit_null():
@@ -40,7 +42,7 @@ def test_partial_provider_config_inherits_defaults_and_allows_explicit_null():
     )
 
     assert inherited.providers["codex"].model == "gpt-5.6-sol"
-    assert inherited.providers["codex"].effort == "xhigh"
+    assert inherited.providers["codex"].effort == "high"
     assert explicit_cli_default.providers["codex"].model is None
     assert explicit_cli_default.providers["codex"].effort is None
 
@@ -62,11 +64,11 @@ def test_v080_config_migrates_automatic_nulls_to_v081_defaults():
 
     migrated = Config.from_dict(legacy)
 
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.providers["codex"].model == "gpt-5.6-sol"
-    assert migrated.providers["codex"].effort == "xhigh"
+    assert migrated.providers["codex"].effort == "high"
     assert migrated.providers["claude"].model == "claude-opus-5"
-    assert migrated.providers["claude"].effort == "xhigh"
+    assert migrated.providers["claude"].effort == "high"
 
 
 def test_v080_config_migration_preserves_custom_models():
@@ -80,12 +82,45 @@ def test_v080_config_migration_preserves_custom_models():
         }
     )
 
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.providers["codex"].model == "custom-codex"
     assert migrated.providers["claude"].model == "custom-claude"
 
 
-@pytest.mark.parametrize("schema_version", [True, 0, 3, "2"])
+def test_v081_config_migrates_only_exact_old_default_pairs():
+    migrated = Config.from_dict(
+        {
+            "schema_version": 2,
+            "providers": {
+                "codex": {"model": "gpt-5.6-sol", "effort": "xhigh"},
+                "claude": {"model": "custom-claude", "effort": "xhigh"},
+            },
+        }
+    )
+
+    assert migrated.schema_version == 3
+    assert migrated.providers["codex"].effort == "high"
+    assert migrated.providers["claude"].effort == "xhigh"
+
+
+def test_update_channel_is_strict_and_round_trips(tmp_path):
+    path = tmp_path / "config.json"
+    config = Config(update_channel="stable")
+
+    save_config(config, path)
+
+    assert load_config(path).update_channel == "stable"
+    with pytest.raises(ConfigError, match="update_channel"):
+        Config.from_dict({"update_channel": "nightly"})
+
+
+@pytest.mark.parametrize("channel", [None, True, 1, ["beta"], {"value": "beta"}])
+def test_update_channel_rejects_non_strings_with_typed_error(channel):
+    with pytest.raises(ConfigError, match="update_channel"):
+        Config.from_dict({"update_channel": channel})
+
+
+@pytest.mark.parametrize("schema_version", [True, 0, 4, "3"])
 def test_config_rejects_invalid_schema_versions(schema_version):
     with pytest.raises(ConfigError, match="schema_version"):
         Config.from_dict({"schema_version": schema_version})

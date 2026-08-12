@@ -63,6 +63,11 @@ def test_mcp_exposes_three_tools_with_output_schemas():
 
     assert set(by_name) == {"roundtable_ask", "roundtable_providers", "roundtable_doctor"}
     assert all(tool.output_schema for tool in by_name.values())
+    assert set(by_name["roundtable_ask"].input_schema["properties"]) == {
+        "question", "heads", "rounds", "research", "chair", "timeout", "models"
+    }
+    assert by_name["roundtable_providers"].input_schema["properties"] == {}
+    assert by_name["roundtable_doctor"].input_schema["properties"] == {}
 
 
 def test_cli_and_mcp_share_the_same_structured_run_contract(capsys):

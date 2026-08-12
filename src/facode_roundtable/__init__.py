@@ -1,3 +1,6 @@
 """Roundtable: a login-only council of official model CLIs."""
 
-__version__ = "0.8.1"
+from importlib.metadata import version
+
+
+__version__ = version("facode-roundtable")

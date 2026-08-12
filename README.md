@@ -5,7 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-uv tool install "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip"
+gh release download v0.9.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.9.0 roundtable-dist/facode_roundtable-0.9.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.9.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -55,16 +57,17 @@ model-catalog command, so Roundtable reports that limitation without fabricating
 
 ## Configuration
 
-Roundtable defaults Codex to `gpt-5.6-sol` at `xhigh` effort and Claude to
-`claude-opus-5` at `xhigh` effort. These values live in the same provider configuration used
+Roundtable defaults Codex to `gpt-5.6-sol` at `high` effort and Claude to
+`claude-opus-5` at `high` effort. These values live in the same provider configuration used
 by the CLI, MCP server, adapters, and `roundtable models` output.
 
 ```text
 roundtable config show
 roundtable config set providers.codex.model gpt-5.6-sol
-roundtable config set providers.codex.effort xhigh
+roundtable config set providers.codex.effort high
 roundtable config set providers.claude.model claude-opus-5
-roundtable config set providers.claude.effort xhigh
+roundtable config set providers.claude.effort high
+roundtable config set update_channel beta
 ```
 
 Set a model or effort to `null` to defer to that provider CLI. Per-run model overrides still
@@ -96,7 +99,7 @@ roundtable update
 roundtable uninstall
 ```
 
-`update` reinstalls the current fork from GitHub through `uv`. `uninstall` first removes the exact Roundtable MCP/skill integrations, then removes the global tool. Neither command touches provider logins.
+`update` requires authenticated `gh` plus `uv`, selects the newest immutable GitHub Release in the configured channel, verifies its release attestation, and installs that exact wheel. It never installs from `main` and never downgrades. `uninstall` first removes the exact Roundtable MCP/skill integrations, then removes the global tool. Neither command touches provider logins.
 
 ## Development
 
