@@ -28,7 +28,7 @@ class FakeStatusAdapter:
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.4.0\n"
+    assert capsys.readouterr().out == "roundtable 0.5.0\n"
 
 
 def test_default_service_exposes_exact_five_head_catalog():

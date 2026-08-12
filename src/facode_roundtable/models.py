@@ -89,7 +89,11 @@ class RunResult:
         self.successful_heads = list(dict.fromkeys(item.provider for item in self.responses))
         successful = set(self.successful_heads)
         self.failed_heads = list(
-            dict.fromkeys(error.provider for error in self.errors if error.provider not in successful)
+            dict.fromkeys(
+                error.provider
+                for error in self.errors
+                if error.provider in self.requested_heads and error.provider not in successful
+            )
         )
         self.finished_at = _now()
 
