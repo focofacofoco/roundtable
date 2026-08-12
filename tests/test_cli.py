@@ -139,6 +139,7 @@ def test_harness_cli_returns_machine_readable_idempotent_report(capsys):
 
 def test_update_and_uninstall_use_uv_tool_lifecycle(monkeypatch, capsys):
     calls: list[list[str]] = []
+    scheduled: list[tuple[str, str]] = []
 
     def run(argv, **_kwargs):
         calls.append(argv)
@@ -146,20 +147,22 @@ def test_update_and_uninstall_use_uv_tool_lifecycle(monkeypatch, capsys):
 
     monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
     monkeypatch.setattr("facode_roundtable.cli.shutil.which", lambda name: f"C:/{name}.exe")
+    monkeypatch.setattr("facode_roundtable.cli.WINDOWS", True)
+    monkeypatch.setattr(
+        "facode_roundtable.cli._schedule_windows_update",
+        lambda uv, source: scheduled.append((uv, source)) or 0,
+    )
     harness = FakeHarness()
 
     assert main(["update"], harness_manager=harness) == 0
     assert main(["uninstall"], harness_manager=harness) == 0
     capsys.readouterr()
 
-    assert calls[0] == [
+    assert scheduled == [(
         "C:/uv.exe",
-        "tool",
-        "install",
-        "--force",
         "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip",
-    ]
-    assert calls[1] == ["C:/uv.exe", "tool", "uninstall", "facode-roundtable"]
+    )]
+    assert calls[0] == ["C:/uv.exe", "tool", "uninstall", "facode-roundtable"]
     assert harness.actions == ["remove"]
 
 
