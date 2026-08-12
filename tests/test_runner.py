@@ -31,6 +31,29 @@ def test_runner_uses_disposable_cwd_and_scrubs_secret_environment(tmp_path):
     assert not __import__("pathlib").Path(payload["cwd"]).exists()
 
 
+def test_runner_preserves_explicit_api_key_lockdown_control(tmp_path):
+    script = tmp_path / "inspect_lockdown.py"
+    script.write_text(
+        "import json, os\n"
+        "print(json.dumps({"
+        "'lockdown': os.getenv('GROK_DISABLE_API_KEY_AUTH'), "
+        "'key': os.getenv('GROK_API_KEY')}))\n",
+        encoding="utf-8",
+    )
+    runner = CommandRunner(base_environment={"GROK_API_KEY": "must-not-leak"})
+
+    result = asyncio.run(
+        runner.run(
+            [sys.executable, str(script)],
+            timeout=10,
+            environment={"GROK_DISABLE_API_KEY_AUTH": "1"},
+        )
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload == {"lockdown": "1", "key": None}
+
+
 def test_runner_returns_typed_timeout(tmp_path):
     script = tmp_path / "wait.py"
     script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")

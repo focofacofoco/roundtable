@@ -1,1 +1,0 @@
-"""Packaged provider policy assets."""

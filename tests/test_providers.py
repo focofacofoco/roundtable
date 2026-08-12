@@ -15,9 +15,11 @@ class RecordingRunner:
     def __init__(self, results: list[CommandResult]):
         self.results = list(results)
         self.calls: list[tuple[list[str], str | None]] = []
+        self.environments: list[dict[str, str] | None] = []
 
     async def run(self, argv, *, input_text=None, timeout, environment=None):
         self.calls.append((list(argv), input_text))
+        self.environments.append(environment)
         return self.results.pop(0)
 
 
@@ -77,29 +79,64 @@ def test_claude_requires_first_party_login_and_invocation_disables_local_tools()
 
 
 def test_grok_requires_oauth_and_disable_api_key_policy():
-    valid = result(json.dumps({
-        "authentication": {"authenticated": True, "method": "oauth"},
-        "grok_com_config": {"disable_api_key_auth": True},
-    }))
-    invalid = result(json.dumps({
-        "authentication": {"authenticated": True, "method": "api_key"},
-        "grok_com_config": {"disable_api_key_auth": False},
-    }))
+    valid = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
+    }}))
+    invalid = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": False, "apiKeyAuthDisabled": False,
+    }}))
+    accepted_runner = RecordingRunner([valid, result("grok-build"), valid])
 
-    accepted = asyncio.run(GrokAdapter(RecordingRunner([valid])).status())
+    accepted = asyncio.run(GrokAdapter(accepted_runner).status())
     rejected = asyncio.run(GrokAdapter(RecordingRunner([invalid])).status())
 
     assert accepted.eligible is True
     assert accepted.auth_method == "oauth"
     assert accepted.research is True
+    assert len(accepted_runner.calls) == 3
+    assert accepted_runner.environments == [
+        {"GROK_DISABLE_API_KEY_AUTH": "1"},
+        {"GROK_DISABLE_API_KEY_AUTH": "1"},
+        {"GROK_DISABLE_API_KEY_AUTH": "1"},
+    ]
     assert rejected.reason == "api_key_auth_forbidden"
 
 
+def test_grok_rechecks_api_key_lockdown_after_auth_probe():
+    valid = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
+    }}))
+    invalid = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": False, "apiKeyAuthDisabled": False,
+    }}))
+    adapter = GrokAdapter(RecordingRunner([valid, result("grok-build"), invalid]))
+
+    status = asyncio.run(adapter.status())
+
+    assert status.eligible is False
+    assert status.reason == "api_key_auth_forbidden"
+
+
+def test_grok_rejects_zero_exit_models_probe_when_output_says_unauthenticated():
+    policy = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
+    }}))
+    adapter = GrokAdapter(RecordingRunner([policy, result("You are not authenticated.")]))
+
+    status = asyncio.run(adapter.status())
+
+    assert status.eligible is False
+    assert status.reason == "login_required"
+
+
 def test_grok_research_invocation_allows_only_web_tools():
-    runner = RecordingRunner([result(json.dumps({"text": "Grok answer"}))])
+    policy = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
+    }}))
+    runner = RecordingRunner([policy, result(json.dumps({"text": "Grok answer"}))])
 
     response = asyncio.run(GrokAdapter(runner).invoke("Question", timeout=20, research=True))
-    argv, prompt = runner.calls[0]
+    argv, prompt = runner.calls[1]
 
     assert response.content == "Grok answer"
     assert prompt == "Question"
@@ -107,21 +144,41 @@ def test_grok_research_invocation_allows_only_web_tools():
         "grok", "--prompt-file", "-", "--output-format", "json", "--no-auto-update",
         "--tools", "web_search,web_fetch", "--deny", "MCPTool(*)", "--permission-mode", "dontAsk",
     ]
+    assert runner.environments == [
+        {"GROK_DISABLE_API_KEY_AUTH": "1"},
+        {"GROK_DISABLE_API_KEY_AUTH": "1"},
+    ]
 
 
-def test_gemini_uses_models_as_keyring_login_probe_and_scoped_policy():
+def test_grok_invocation_fails_closed_when_api_key_lockdown_is_not_observable():
+    invalid = result(json.dumps({"loginPolicy": {
+        "disableApiKeyAuth": False, "apiKeyAuthDisabled": False,
+    }}))
+    runner = RecordingRunner([invalid])
+
+    try:
+        asyncio.run(GrokAdapter(runner).invoke("Question", timeout=20))
+    except Exception as error:
+        assert getattr(error, "code", None) == "api_key_auth_forbidden"
+    else:
+        raise AssertionError("Grok invocation must fail closed")
+    assert len(runner.calls) == 1
+
+
+def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
     status = asyncio.run(GeminiAdapter(RecordingRunner([result("gemini-pro Gemini Pro")])).status())
     runner = RecordingRunner([result(json.dumps({"status": "SUCCESS", "response": "Gemini answer"}))])
 
-    response = asyncio.run(GeminiAdapter(runner).invoke("Question", timeout=20, research=True))
+    response = asyncio.run(GeminiAdapter(runner).invoke("Question", timeout=20))
     argv, prompt = runner.calls[0]
 
     assert status.eligible is True
     assert status.auth_method == "google_sign_in"
+    assert status.research is False
     assert response.content == "Gemini answer"
     assert prompt is None
     assert argv[:5] == ["agy", "-p", "Question", "--output-format", "json"]
-    assert "--policy" in argv
+    assert argv[5:] == ["--sandbox", "--mode", "plan", "--disable-slash-commands"]
 
 
 def test_minimax_rejects_api_key_auth_and_uses_oauth_chat():

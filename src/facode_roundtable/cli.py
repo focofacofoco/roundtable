@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Sequence
@@ -14,6 +15,9 @@ from facode_roundtable.config import Config, ConfigError, config_path, load_conf
 from facode_roundtable.mcp_server import serve
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
+from facode_roundtable.providers.gemini import GeminiAdapter
+from facode_roundtable.providers.grok import GrokAdapter
+from facode_roundtable.providers.minimax import MiniMaxAdapter
 from facode_roundtable.render import render_json, render_markdown
 from facode_roundtable.runner import CommandRunner
 from facode_roundtable.service import RoundtableService
@@ -64,7 +68,32 @@ def _parser() -> argparse.ArgumentParser:
 
 def default_service() -> RoundtableService:
     runner = CommandRunner()
-    return RoundtableService({"codex": CodexAdapter(runner), "claude": ClaudeAdapter(runner)})
+    return RoundtableService(
+        {
+            "codex": CodexAdapter(runner, resolve_cli("codex")),
+            "claude": ClaudeAdapter(runner, resolve_cli("claude")),
+            "grok": GrokAdapter(runner, resolve_cli("grok")),
+            "gemini": GeminiAdapter(runner, resolve_cli("agy")),
+            "minimax": MiniMaxAdapter(runner, resolve_cli("mmx")),
+        }
+    )
+
+
+def resolve_cli(
+    name: str, *, home: Path | None = None, local_app_data: Path | None = None
+) -> str:
+    detected = shutil.which(name)
+    if detected:
+        return detected
+    user_home = home or Path.home()
+    app_data = local_app_data or Path(os.environ.get("LOCALAPPDATA", user_home / "AppData" / "Local"))
+    executable = f"{name}.exe" if os.name == "nt" or name in {"grok", "agy"} else name
+    candidates = {
+        "grok": user_home / ".grok" / "bin" / executable,
+        "agy": app_data / "agy" / "bin" / executable,
+    }
+    candidate = candidates.get(name)
+    return str(candidate) if candidate and candidate.is_file() else name
 
 
 def main(

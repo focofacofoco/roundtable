@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from facode_roundtable.cli import main
+from facode_roundtable.cli import default_service, main, resolve_cli
 from facode_roundtable.config import load_config
 from facode_roundtable.models import ProviderResponse, RunResult
 from facode_roundtable.providers.base import ProviderStatus
@@ -28,7 +28,20 @@ class FakeStatusAdapter:
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.2.0\n"
+    assert capsys.readouterr().out == "roundtable 0.3.0\n"
+
+
+def test_default_service_exposes_exact_five_head_catalog():
+    assert tuple(default_service().adapters) == ("codex", "claude", "grok", "gemini", "minimax")
+
+
+def test_cli_resolution_finds_official_user_install_before_shell_restart(tmp_path, monkeypatch):
+    grok = tmp_path / ".grok" / "bin" / "grok.exe"
+    grok.parent.mkdir(parents=True)
+    grok.touch()
+    monkeypatch.setattr("facode_roundtable.cli.shutil.which", lambda _: None)
+
+    assert resolve_cli("grok", home=tmp_path) == str(grok)
 
 
 def test_ask_json_writes_only_json_to_stdout(capsys):

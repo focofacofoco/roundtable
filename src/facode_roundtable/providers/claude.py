@@ -8,11 +8,12 @@ from .base import InvocationResult, ProviderError, ProviderStatus, Runner
 class ClaudeAdapter:
     name = "claude"
 
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, executable: str = "claude"):
         self.runner = runner
+        self.executable = executable
 
     async def status(self) -> ProviderStatus:
-        result = await self.runner.run(["claude", "auth", "status", "--json"], timeout=15)
+        result = await self.runner.run([self.executable, "auth", "status", "--json"], timeout=15)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
         try:
@@ -33,7 +34,7 @@ class ClaudeAdapter:
     ) -> InvocationResult:
         tools = "WebSearch,WebFetch" if research else ""
         argv = [
-            "claude",
+            self.executable,
             "--print",
             "--output-format",
             "json",

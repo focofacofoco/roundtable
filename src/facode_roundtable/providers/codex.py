@@ -8,11 +8,12 @@ from .base import InvocationResult, ProviderError, ProviderStatus, Runner
 class CodexAdapter:
     name = "codex"
 
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, executable: str = "codex"):
         self.runner = runner
+        self.executable = executable
 
     async def status(self) -> ProviderStatus:
-        result = await self.runner.run(["codex", "login", "status"], timeout=15)
+        result = await self.runner.run([self.executable, "login", "status"], timeout=15)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
         output = f"{result.stdout}\n{result.stderr}".lower()
@@ -28,7 +29,7 @@ class CodexAdapter:
         if research:
             raise ProviderError("research_ineligible", "codex cannot prove web-only tool access")
         argv = [
-            "codex",
+            self.executable,
             "exec",
             "--ephemeral",
             "--ignore-user-config",

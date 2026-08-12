@@ -9,11 +9,12 @@ from .grok import _json_text
 class MiniMaxAdapter:
     name = "minimax"
 
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, executable: str = "mmx"):
         self.runner = runner
+        self.executable = executable
 
     async def status(self) -> ProviderStatus:
-        result = await self.runner.run(["mmx", "auth", "status"], timeout=20)
+        result = await self.runner.run([self.executable, "auth", "status"], timeout=20)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
         output = f"{result.stdout}\n{result.stderr}".lower()
@@ -28,7 +29,7 @@ class MiniMaxAdapter:
     ) -> InvocationResult:
         if research:
             raise ProviderError("research_ineligible", "minimax chat cannot prove web-only mode")
-        argv = ["mmx", "text", "chat", "--messages-file", "-", "--output", "json"]
+        argv = [self.executable, "text", "chat", "--messages-file", "-", "--output", "json"]
         if model:
             argv.extend(["--model", model])
         messages = json.dumps([{"role": "user", "content": prompt}], ensure_ascii=False)

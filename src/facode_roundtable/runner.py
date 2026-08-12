@@ -12,13 +12,15 @@ import time
 
 
 _SECRET_MARKERS = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+_SAFE_SECURITY_CONTROLS = frozenset({"GROK_DISABLE_API_KEY_AUTH"})
 
 
 def sanitize_environment(environment: Mapping[str, str]) -> dict[str, str]:
     return {
         name: value
         for name, value in environment.items()
-        if not any(marker in name.upper() for marker in _SECRET_MARKERS)
+        if name.upper() in _SAFE_SECURITY_CONTROLS
+        or not any(marker in name.upper() for marker in _SECRET_MARKERS)
     }
 
 

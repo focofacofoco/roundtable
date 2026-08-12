@@ -6,35 +6,57 @@ from typing import Any
 from .base import InvocationResult, ProviderError, ProviderStatus, Runner
 
 
+_LOGIN_ONLY_ENVIRONMENT = {"GROK_DISABLE_API_KEY_AUTH": "1"}
+
+
 class GrokAdapter:
     name = "grok"
 
-    def __init__(self, runner: Runner):
+    def __init__(self, runner: Runner, executable: str = "grok"):
         self.runner = runner
+        self.executable = executable
 
     async def status(self) -> ProviderStatus:
-        result = await self.runner.run(["grok", "inspect", "--json"], timeout=20)
+        result, policy_enforced = await self._inspect_policy()
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError:
+        if result.returncode != 0 or not result.stdout.strip():
             return ProviderStatus(self.name, True, False, reason="auth_status_unreadable")
-        method = str(_find(payload, "method") or "").lower()
-        authenticated = _find(payload, "authenticated") is True
-        policy = _find(payload, "disable_api_key_auth") is True
-        if "api" in method or "key" in method or not policy:
+        if not policy_enforced:
             return ProviderStatus(self.name, True, False, reason="api_key_auth_forbidden")
-        if authenticated and method in {"oauth", "oidc", "device_auth", "device_code"}:
+        models = await self.runner.run(
+            [self.executable, "models"],
+            timeout=20,
+            environment=_LOGIN_ONLY_ENVIRONMENT,
+        )
+        models_output = f"{models.stdout}\n{models.stderr}".lower()
+        if (
+            models.returncode == 0
+            and models.stdout.strip()
+            and "not authenticated" not in models_output
+            and "sign in" not in models_output
+        ):
+            _, policy_still_enforced = await self._inspect_policy()
+            if not policy_still_enforced:
+                return ProviderStatus(
+                    self.name, True, False, reason="api_key_auth_forbidden"
+                )
             return ProviderStatus(self.name, True, True, auth_method="oauth", research=True)
         return ProviderStatus(self.name, True, False, reason="login_required")
 
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False
     ) -> InvocationResult:
+        policy_result, policy_enforced = await self._inspect_policy()
+        if policy_result.returncode == 127:
+            raise ProviderError("cli_not_found", "grok CLI is not installed")
+        if not policy_enforced:
+            raise ProviderError(
+                "api_key_auth_forbidden", "grok API-key authentication is not disabled"
+            )
         tools = "web_search,web_fetch" if research else ""
         argv = [
-            "grok",
+            self.executable,
             "--prompt-file",
             "-",
             "--output-format",
@@ -49,7 +71,12 @@ class GrokAdapter:
         ]
         if model:
             argv.extend(["--model", model])
-        result = await self.runner.run(argv, input_text=prompt, timeout=timeout)
+        result = await self.runner.run(
+            argv,
+            input_text=prompt,
+            timeout=timeout,
+            environment=_LOGIN_ONLY_ENVIRONMENT,
+        )
         if result.timed_out:
             raise ProviderError("timeout", "grok timed out")
         if result.returncode != 0:
@@ -58,6 +85,26 @@ class GrokAdapter:
         if not content:
             raise ProviderError("empty_response", "grok returned no answer")
         return InvocationResult(content=content, model=model, duration_ms=result.duration_ms)
+
+    async def _inspect_policy(self):
+        result = await self.runner.run(
+            [self.executable, "inspect", "--json"],
+            timeout=20,
+            environment=_LOGIN_ONLY_ENVIRONMENT,
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return result, False
+        policy = (
+            _find(payload, "disable_api_key_auth") is True
+            or _find(payload, "disableApiKeyAuth") is True
+        )
+        enforced = (
+            _find(payload, "api_key_auth_disabled") is True
+            or _find(payload, "apiKeyAuthDisabled") is True
+        )
+        return result, policy and enforced
 
 
 def _find(value: Any, key: str) -> Any:
