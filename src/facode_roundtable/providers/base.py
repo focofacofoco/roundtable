@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Protocol
 
 from facode_roundtable.models import Citation
@@ -64,3 +65,14 @@ class Adapter(Protocol):
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False
     ) -> InvocationResult: ...
+
+
+async def probe_cli_version(runner: Runner, executable: str) -> str | None:
+    result = await runner.run([executable, "--version"], timeout=10)
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip() or result.stderr.strip()
+    if not output:
+        return None
+    first_line = re.sub(r"\x1b\[[0-9;]*m", "", output.splitlines()[0]).strip()
+    return first_line[:200] or None

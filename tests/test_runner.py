@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from facode_roundtable.runner import CommandRunner
+from facode_roundtable.runner import CommandRunner, _remove_workdir
 
 
 def test_runner_uses_disposable_cwd_and_scrubs_secret_environment(tmp_path):
@@ -103,3 +103,56 @@ def test_runner_terminates_child_when_caller_cancels(monkeypatch):
 
     assert terminated is True
     assert process.communicate_calls == 2
+
+
+def test_runner_redacts_environment_secrets_and_token_shaped_output(tmp_path):
+    script = tmp_path / "emit_secrets.py"
+    script.write_text(
+        "import os\n"
+        "print('env=' + os.environ.get('SAFE_TEST_VALUE', ''))\n"
+        "print('Authorization: Bearer abc.def.ghi')\n"
+        "print('refresh_token=raw-refresh-secret')\n"
+        "print('api_key: sk-examplevalue')\n"
+        "print('stderr password=very-secret', file=__import__('sys').stderr)\n",
+        encoding="utf-8",
+    )
+    runner = CommandRunner(
+        base_environment={
+            "SAFE_TEST_VALUE": "not-sensitive",
+            "OPENAI_API_KEY": "environment-secret-value",
+        }
+    )
+
+    result = asyncio.run(runner.run([sys.executable, str(script)], timeout=10))
+    combined = f"{result.stdout}\n{result.stderr}"
+
+    assert "not-sensitive" in combined
+    for secret in (
+        "environment-secret-value",
+        "abc.def.ghi",
+        "raw-refresh-secret",
+        "sk-examplevalue",
+        "very-secret",
+    ):
+        assert secret not in combined
+    assert "[REDACTED]" in combined
+
+
+def test_workdir_cleanup_retries_transient_windows_handle(monkeypatch, tmp_path):
+    work = tmp_path / "isolated"
+    work.mkdir()
+    actual_rmtree = __import__("shutil").rmtree
+    attempts = 0
+
+    def flaky_rmtree(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("transient handle")
+        actual_rmtree(path)
+
+    monkeypatch.setattr("facode_roundtable.runner.shutil.rmtree", flaky_rmtree)
+
+    assert asyncio.run(_remove_workdir(work)) is True
+    assert attempts == 2
+    assert not work.exists()

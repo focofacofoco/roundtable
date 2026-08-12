@@ -28,7 +28,7 @@ class FakeStatusAdapter:
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.5.0\n"
+    assert capsys.readouterr().out == "roundtable 0.6.0\n"
 
 
 def test_default_service_exposes_exact_five_head_catalog():
@@ -89,3 +89,19 @@ def test_config_set_show_and_reset_are_strict_and_atomic(tmp_path, capsys):
     assert load_config(path).concurrency == 3
     assert main(["config", "reset"], config_file=path) == 0
     assert load_config(path).concurrency == 5
+
+
+def test_output_is_ephemeral_unless_explicitly_persisted(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["ask", "Question", "--heads", "codex"], service=FakeService()) == 0
+    capsys.readouterr()
+    assert list(tmp_path.iterdir()) == []
+
+    target = tmp_path / "answer.md"
+    assert main(
+        ["ask", "Question", "--heads", "codex", "--out", str(target)],
+        service=FakeService(),
+    ) == 0
+    assert target.read_text(encoding="utf-8").startswith("# Roundtable")
+    assert not target.with_suffix(".tmp").exists()

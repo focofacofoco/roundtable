@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -72,3 +73,25 @@ def test_environment_sanitization_removes_credentials_without_touching_safe_valu
     )
 
     assert clean == {"PATH": "safe-path", "LANG": "pt_BR.UTF-8"}
+
+
+def test_runtime_source_has_no_direct_provider_transport_or_credential_store_access():
+    source_root = Path(__file__).parents[1] / "src" / "facode_roundtable"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(source_root.rglob("*.py"))
+    ).lower()
+
+    forbidden = (
+        "import requests",
+        "import httpx",
+        "urllib.request",
+        "aiohttp",
+        '"curl"',
+        "auth.json",
+        ".api_keys",
+        "config.env",
+        ".claude.json",
+        "credentials.json",
+    )
+    assert not [item for item in forbidden if item in source]

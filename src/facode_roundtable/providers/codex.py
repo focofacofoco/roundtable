@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .base import InvocationResult, ProviderError, ProviderStatus, Runner
+from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
 class CodexAdapter:
@@ -16,12 +16,28 @@ class CodexAdapter:
         result = await self.runner.run([self.executable, "login", "status"], timeout=15)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
+        version = await probe_cli_version(self.runner, self.executable)
         output = f"{result.stdout}\n{result.stderr}".lower()
         if "chatgpt" in output and result.returncode == 0:
-            return ProviderStatus(self.name, True, True, auth_method="chatgpt", research=False)
+            return ProviderStatus(
+                self.name,
+                True,
+                True,
+                auth_method="chatgpt",
+                cli_version=version,
+                research=False,
+            )
         if "api key" in output or "api_key" in output:
-            return ProviderStatus(self.name, True, False, reason="api_key_auth_forbidden")
-        return ProviderStatus(self.name, True, False, reason="login_required")
+            return ProviderStatus(
+                self.name,
+                True,
+                False,
+                reason="api_key_auth_forbidden",
+                cli_version=version,
+            )
+        return ProviderStatus(
+            self.name, True, False, reason="login_required", cli_version=version
+        )
 
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False

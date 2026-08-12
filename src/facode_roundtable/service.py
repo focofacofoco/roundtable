@@ -9,6 +9,7 @@ from facode_roundtable.models import ChairResult, Citation
 from facode_roundtable.models import ProviderError as ResultError
 from facode_roundtable.models import ProviderResponse, RunResult
 from facode_roundtable.providers.base import Adapter, InvocationResult, ProviderError, ProviderStatus
+from facode_roundtable.runner import redact_text
 
 
 _CHAIR_ORDER = ("claude", "codex", "grok", "gemini", "minimax")
@@ -61,7 +62,9 @@ class RoundtableService:
                 result.errors.append(error)
                 continue
             assert status is not None
-            result.provider_metadata[name] = status.to_dict()
+            metadata = status.to_dict()
+            metadata["model"] = (models or {}).get(name) or status.model
+            result.provider_metadata[name] = metadata
             if not status.eligible:
                 result.errors.append(ResultError(name, status.reason or "ineligible", "provider is ineligible"))
             elif research and not status.research:
@@ -271,7 +274,9 @@ class RoundtableService:
                 name, "timeout", "provider timed out", round=round_number
             )
         except ProviderError as exc:
-            return None, ResultError(name, exc.code, str(exc), round=round_number)
+            return None, ResultError(
+                name, exc.code, redact_text(str(exc)), round=round_number
+            )
         except Exception:
             return None, ResultError(
                 name, "provider_failed", "provider failed", round=round_number

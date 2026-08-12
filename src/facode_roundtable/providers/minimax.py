@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .base import InvocationResult, ProviderError, ProviderStatus, Runner
+from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 from .grok import _json_text
 
 
@@ -17,12 +17,28 @@ class MiniMaxAdapter:
         result = await self.runner.run([self.executable, "auth", "status"], timeout=20)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
+        version = await probe_cli_version(self.runner, self.executable)
         output = f"{result.stdout}\n{result.stderr}".lower()
         if "api key" in output or "api_key" in output:
-            return ProviderStatus(self.name, True, False, reason="api_key_auth_forbidden")
+            return ProviderStatus(
+                self.name,
+                True,
+                False,
+                reason="api_key_auth_forbidden",
+                cli_version=version,
+            )
         if result.returncode == 0 and "oauth" in output:
-            return ProviderStatus(self.name, True, True, auth_method="oauth", research=False)
-        return ProviderStatus(self.name, True, False, reason="login_required")
+            return ProviderStatus(
+                self.name,
+                True,
+                True,
+                auth_method="oauth",
+                cli_version=version,
+                research=False,
+            )
+        return ProviderStatus(
+            self.name, True, False, reason="login_required", cli_version=version
+        )
 
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False

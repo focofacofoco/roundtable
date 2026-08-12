@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .base import InvocationResult, ProviderError, ProviderStatus, Runner
+from .base import InvocationResult, ProviderError, ProviderStatus, Runner, probe_cli_version
 
 
 class ClaudeAdapter:
@@ -16,18 +16,34 @@ class ClaudeAdapter:
         result = await self.runner.run([self.executable, "auth", "status", "--json"], timeout=15)
         if result.returncode == 127:
             return ProviderStatus(self.name, False, False, reason="cli_not_found")
+        version = await probe_cli_version(self.runner, self.executable)
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
-            return ProviderStatus(self.name, True, False, reason="auth_status_unreadable")
+            return ProviderStatus(
+                self.name, True, False, reason="auth_status_unreadable", cli_version=version
+            )
         method = str(payload.get("authMethod", "")).lower()
         if payload.get("loggedIn") is True and method in {"claude.ai", "firstparty", "first_party"}:
             return ProviderStatus(
-                self.name, True, True, auth_method="first_party", research=True
+                self.name,
+                True,
+                True,
+                auth_method="first_party",
+                cli_version=version,
+                research=True,
             )
         if "api" in method or "key" in method:
-            return ProviderStatus(self.name, True, False, reason="api_key_auth_forbidden")
-        return ProviderStatus(self.name, True, False, reason="login_required")
+            return ProviderStatus(
+                self.name,
+                True,
+                False,
+                reason="api_key_auth_forbidden",
+                cli_version=version,
+            )
+        return ProviderStatus(
+            self.name, True, False, reason="login_required", cli_version=version
+        )
 
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False

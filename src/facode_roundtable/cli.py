@@ -151,9 +151,9 @@ def main(
     rendered = render_json(result) if args.format == "json" else render_markdown(result)
     sys.stdout.write(rendered)
     if args.out:
-        args.out.write_text(rendered, encoding="utf-8")
+        _write_output(args.out, rendered)
     if args.save:
-        Path(f"roundtable-{result.run_id}.json").write_text(render_json(result), encoding="utf-8")
+        _write_output(Path(f"roundtable-{result.run_id}.json"), render_json(result))
     return int(result.exit_code)
 
 
@@ -328,6 +328,16 @@ def _models(values: list[str]) -> dict[str, str]:
             raise ValueError("model overrides must use provider=id")
         models[provider] = model
     return models
+
+
+def _write_output(target: Path, content: str) -> None:
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    try:
+        os.chmod(temporary, 0o600)
+    except OSError:
+        pass
+    temporary.replace(target)
 
 
 if __name__ == "__main__":

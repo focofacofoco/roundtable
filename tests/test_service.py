@@ -317,3 +317,34 @@ def test_multi_round_requires_two_distinct_heads_and_explicit_chair_in_table():
             pass
         else:
             raise AssertionError("invalid deliberation must be rejected before inference")
+
+
+def test_provider_metadata_records_requested_model_provenance():
+    result = asyncio.run(
+        RoundtableService({"codex": FakeAdapter("codex")}).ask(
+            "Question",
+            heads=["codex"],
+            models={"codex": "gpt-test"},
+        )
+    )
+
+    assert result.provider_metadata["codex"]["model"] == "gpt-test"
+    assert result.responses[0].model == "gpt-test"
+
+
+def test_provider_error_messages_are_redacted_before_public_output():
+    adapter = FakeAdapter("codex")
+
+    async def leak(*_args, **_kwargs):
+        raise ProviderError(
+            "provider_failed", "Authorization: Bearer secret.token.value"
+        )
+
+    adapter.invoke = leak
+
+    result = asyncio.run(
+        RoundtableService({"codex": adapter}).ask("Question", heads=["codex"])
+    )
+
+    assert "secret.token.value" not in result.errors[0].message
+    assert "[REDACTED]" in result.errors[0].message

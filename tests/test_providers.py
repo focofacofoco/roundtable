@@ -28,14 +28,23 @@ def result(stdout: str = "", stderr: str = "", returncode: int = 0) -> CommandRe
 
 
 def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
-    chatgpt = CodexAdapter(RecordingRunner([result("Logged in using ChatGPT")]))
-    api_key = CodexAdapter(RecordingRunner([result("Logged in using an API key")]))
+    chatgpt = CodexAdapter(
+        RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")])
+    )
+    api_key = CodexAdapter(
+        RecordingRunner([result("Logged in using an API key"), result("codex-cli 1.2.3")])
+    )
 
     accepted = asyncio.run(chatgpt.status())
     rejected = asyncio.run(api_key.status())
 
     assert accepted == ProviderStatus(
-        name="codex", installed=True, eligible=True, auth_method="chatgpt", research=False
+        name="codex",
+        installed=True,
+        eligible=True,
+        auth_method="chatgpt",
+        cli_version="codex-cli 1.2.3",
+        research=False,
     )
     assert rejected.eligible is False
     assert rejected.reason == "api_key_auth_forbidden"
@@ -60,7 +69,10 @@ def test_codex_invocation_is_ephemeral_isolated_and_parses_json_events():
 
 def test_claude_requires_first_party_login_and_invocation_disables_local_tools():
     status_runner = RecordingRunner(
-        [result(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}))]
+        [
+            result(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"})),
+            result("2.1.0 (Claude Code)"),
+        ]
     )
     status = asyncio.run(ClaudeAdapter(status_runner).status())
     invoke_runner = RecordingRunner([result(json.dumps({"result": "Claude answer", "is_error": False}))])
@@ -70,6 +82,7 @@ def test_claude_requires_first_party_login_and_invocation_disables_local_tools()
 
     assert status.eligible is True
     assert status.auth_method == "first_party"
+    assert status.cli_version == "2.1.0 (Claude Code)"
     assert response.content == "Claude answer"
     assert prompt == "Question"
     assert argv == [
@@ -85,17 +98,23 @@ def test_grok_requires_oauth_and_disable_api_key_policy():
     invalid = result(json.dumps({"loginPolicy": {
         "disableApiKeyAuth": False, "apiKeyAuthDisabled": False,
     }}))
-    accepted_runner = RecordingRunner([valid, result("grok-build"), valid])
+    accepted_runner = RecordingRunner(
+        [valid, result("grok 1.0.3"), result("grok-build"), valid]
+    )
 
     accepted = asyncio.run(GrokAdapter(accepted_runner).status())
-    rejected = asyncio.run(GrokAdapter(RecordingRunner([invalid])).status())
+    rejected = asyncio.run(
+        GrokAdapter(RecordingRunner([invalid, result("grok 1.0.3")])).status()
+    )
 
     assert accepted.eligible is True
     assert accepted.auth_method == "oauth"
     assert accepted.research is True
-    assert len(accepted_runner.calls) == 3
+    assert accepted.cli_version == "grok 1.0.3"
+    assert len(accepted_runner.calls) == 4
     assert accepted_runner.environments == [
         {"GROK_DISABLE_API_KEY_AUTH": "1"},
+        None,
         {"GROK_DISABLE_API_KEY_AUTH": "1"},
         {"GROK_DISABLE_API_KEY_AUTH": "1"},
     ]
@@ -109,7 +128,9 @@ def test_grok_rechecks_api_key_lockdown_after_auth_probe():
     invalid = result(json.dumps({"loginPolicy": {
         "disableApiKeyAuth": False, "apiKeyAuthDisabled": False,
     }}))
-    adapter = GrokAdapter(RecordingRunner([valid, result("grok-build"), invalid]))
+    adapter = GrokAdapter(
+        RecordingRunner([valid, result("grok 1.0.3"), result("grok-build"), invalid])
+    )
 
     status = asyncio.run(adapter.status())
 
@@ -121,7 +142,11 @@ def test_grok_rejects_zero_exit_models_probe_when_output_says_unauthenticated():
     policy = result(json.dumps({"loginPolicy": {
         "disableApiKeyAuth": True, "apiKeyAuthDisabled": True,
     }}))
-    adapter = GrokAdapter(RecordingRunner([policy, result("You are not authenticated.")]))
+    adapter = GrokAdapter(
+        RecordingRunner(
+            [policy, result("grok 1.0.3"), result("You are not authenticated.")]
+        )
+    )
 
     status = asyncio.run(adapter.status())
 
@@ -166,7 +191,11 @@ def test_grok_invocation_fails_closed_when_api_key_lockdown_is_not_observable():
 
 
 def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
-    status = asyncio.run(GeminiAdapter(RecordingRunner([result("gemini-pro Gemini Pro")])).status())
+    status = asyncio.run(
+        GeminiAdapter(
+            RecordingRunner([result("gemini-pro Gemini Pro"), result("agy 1.1.12")])
+        ).status()
+    )
     runner = RecordingRunner([result(json.dumps({"status": "SUCCESS", "response": "Gemini answer"}))])
 
     response = asyncio.run(GeminiAdapter(runner).invoke("Question", timeout=20))
@@ -174,6 +203,7 @@ def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
 
     assert status.eligible is True
     assert status.auth_method == "google_sign_in"
+    assert status.cli_version == "agy 1.1.12"
     assert status.research is False
     assert response.content == "Gemini answer"
     assert prompt is None
@@ -182,8 +212,16 @@ def test_gemini_uses_models_as_keyring_login_probe_and_sandboxed_plan_mode():
 
 
 def test_minimax_rejects_api_key_auth_and_uses_oauth_chat():
-    oauth = asyncio.run(MiniMaxAdapter(RecordingRunner([result("Authenticated via OAuth")])).status())
-    key = asyncio.run(MiniMaxAdapter(RecordingRunner([result("Authenticated via API key")])).status())
+    oauth = asyncio.run(
+        MiniMaxAdapter(
+            RecordingRunner([result("Authenticated via OAuth"), result("mmx 1.0.19")])
+        ).status()
+    )
+    key = asyncio.run(
+        MiniMaxAdapter(
+            RecordingRunner([result("Authenticated via API key"), result("mmx 1.0.19")])
+        ).status()
+    )
     runner = RecordingRunner([result(json.dumps({"text": "MiniMax answer"}))])
 
     response = asyncio.run(MiniMaxAdapter(runner).invoke("Question", timeout=20))
@@ -191,6 +229,7 @@ def test_minimax_rejects_api_key_auth_and_uses_oauth_chat():
 
     assert oauth.eligible is True
     assert oauth.auth_method == "oauth"
+    assert oauth.cli_version == "mmx 1.0.19"
     assert key.reason == "api_key_auth_forbidden"
     assert response.content == "MiniMax answer"
     assert argv == ["mmx", "text", "chat", "--messages-file", "-", "--output", "json"]
