@@ -83,7 +83,7 @@ def create_server(
         configured_models = {
             name: provider.model
             for name, provider in effective.providers.items()
-            if provider.model is not None
+            if provider.model is not None and name in selected
         }
         configured_models.update(models or {})
         result = await service.ask(

@@ -21,6 +21,87 @@ def test_config_round_trips_without_credentials(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["retention"] == "ephemeral"
 
 
+def test_config_has_single_source_defaults_for_codex_and_claude():
+    config = Config()
+
+    assert config.providers["codex"].model == "gpt-5.6-sol"
+    assert config.providers["codex"].effort == "xhigh"
+    assert config.providers["claude"].model == "claude-opus-5"
+    assert config.providers["claude"].effort == "xhigh"
+    assert config.providers["grok"].model is None
+    assert config.providers["grok"].effort is None
+
+
+def test_partial_provider_config_inherits_defaults_and_allows_explicit_null():
+    inherited = Config.from_dict({"providers": {"codex": {"enabled": False}}})
+    inherited.providers["codex"].enabled = True
+    explicit_cli_default = Config.from_dict(
+        {"providers": {"codex": {"model": None, "effort": None}}}
+    )
+
+    assert inherited.providers["codex"].model == "gpt-5.6-sol"
+    assert inherited.providers["codex"].effort == "xhigh"
+    assert explicit_cli_default.providers["codex"].model is None
+    assert explicit_cli_default.providers["codex"].effort is None
+
+
+def test_v080_config_migrates_automatic_nulls_to_v081_defaults():
+    legacy = {
+        "schema_version": 1,
+        "default_heads": "available",
+        "chair": "auto",
+        "concurrency": 5,
+        "timeout_seconds": 300,
+        "research_timeout_seconds": 600,
+        "retention": "ephemeral",
+        "providers": {
+            name: {"enabled": True, "model": None}
+            for name in ("codex", "claude", "grok", "gemini", "minimax")
+        },
+    }
+
+    migrated = Config.from_dict(legacy)
+
+    assert migrated.schema_version == 2
+    assert migrated.providers["codex"].model == "gpt-5.6-sol"
+    assert migrated.providers["codex"].effort == "xhigh"
+    assert migrated.providers["claude"].model == "claude-opus-5"
+    assert migrated.providers["claude"].effort == "xhigh"
+
+
+def test_v080_config_migration_preserves_custom_models():
+    migrated = Config.from_dict(
+        {
+            "schema_version": 1,
+            "providers": {
+                "codex": {"enabled": True, "model": "custom-codex"},
+                "claude": {"enabled": True, "model": "custom-claude"},
+            },
+        }
+    )
+
+    assert migrated.schema_version == 2
+    assert migrated.providers["codex"].model == "custom-codex"
+    assert migrated.providers["claude"].model == "custom-claude"
+
+
+@pytest.mark.parametrize("schema_version", [True, 0, 3, "2"])
+def test_config_rejects_invalid_schema_versions(schema_version):
+    with pytest.raises(ConfigError, match="schema_version"):
+        Config.from_dict({"schema_version": schema_version})
+
+
+@pytest.mark.parametrize("effort", ["minimal", "max", "xhigh&whoami", 1])
+def test_config_rejects_unsupported_effort(effort):
+    with pytest.raises(ConfigError, match="provider effort"):
+        Config.from_dict({"providers": {"codex": {"effort": effort}}})
+
+
+def test_config_rejects_effort_for_provider_without_cli_support():
+    with pytest.raises(ConfigError, match="effort is unsupported for grok"):
+        Config.from_dict({"providers": {"grok": {"effort": "high"}}})
+
+
 @pytest.mark.parametrize("field", ["api_key", "access_token", "password", "secret"])
 def test_config_rejects_credential_fields(field):
     payload = Config().to_dict()

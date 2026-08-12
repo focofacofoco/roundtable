@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 
 from facode_roundtable.cli import default_service, main, resolve_cli
 from facode_roundtable.config import Config, ProviderConfig, load_config, save_config
 from facode_roundtable.models import ProviderResponse, RunResult
 from facode_roundtable.providers.base import ProviderStatus
+from facode_roundtable.runner import CommandResult
 
 
 class FakeService:
@@ -49,9 +51,23 @@ class FakeHarness:
         return self._report("remove")
 
 
+class FakeCommandRunner:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = []
+
+    async def run(self, argv, *, input_text=None, timeout, environment=None):
+        self.calls.append((list(argv), input_text, timeout, environment))
+        return self.results.pop(0)
+
+
+def command_result(stdout="", stderr="", returncode=0, *, timed_out=False):
+    return CommandResult(tuple(), returncode, stdout, stderr, 1, timed_out)
+
+
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.8.0\n"
+    assert capsys.readouterr().out == "roundtable 0.8.1\n"
 
 
 def test_lightweight_cli_import_does_not_load_mcp_sdk():
@@ -66,7 +82,13 @@ def test_lightweight_cli_import_does_not_load_mcp_sdk():
 
 
 def test_default_service_exposes_exact_five_head_catalog():
-    assert tuple(default_service().adapters) == ("codex", "claude", "grok", "gemini", "minimax")
+    service = default_service()
+
+    assert tuple(service.adapters) == ("codex", "claude", "grok", "gemini", "minimax")
+    assert service.adapters["codex"].default_model == "gpt-5.6-sol"
+    assert service.adapters["codex"].default_effort == "xhigh"
+    assert service.adapters["claude"].default_model == "claude-opus-5"
+    assert service.adapters["claude"].default_effort == "xhigh"
 
 
 def test_cli_resolution_finds_official_user_install_before_shell_restart(tmp_path, monkeypatch):
@@ -220,23 +242,144 @@ def test_grok_login_uses_device_oauth_and_api_key_lockdown(monkeypatch):
     assert "OPENAI_API_KEY" not in captured["environment"]
 
 
-def test_model_discovery_scrubs_credentials_and_resolves_official_cli(monkeypatch):
-    captured = {}
-
-    def run(argv, **kwargs):
-        captured["argv"] = argv
-        captured["environment"] = kwargs["env"]
-        return __import__("subprocess").CompletedProcess(argv, 0)
-
-    monkeypatch.setattr("facode_roundtable.cli.subprocess.run", run)
+def test_codex_model_discovery_uses_official_catalog_and_hides_internal_models(
+    monkeypatch, capsys
+):
+    runner = FakeCommandRunner(
+        [
+            command_result(
+                json.dumps(
+                    {
+                        "models": [
+                            {"slug": "gpt-5.6-sol", "visibility": "list"},
+                            {"slug": "gpt-5.6-sol-wm", "visibility": "hide"},
+                            {"slug": "gpt-5.6-terra", "visibility": "list"},
+                        ]
+                    }
+                )
+            )
+        ]
+    )
     monkeypatch.setattr(
         "facode_roundtable.cli.resolve_cli", lambda name: f"resolved-{name}"
     )
-    monkeypatch.setenv("GEMINI_API_KEY", "must-not-leak")
 
-    assert main(["models", "gemini"], service=FakeService()) == 0
-    assert captured["argv"] == ["resolved-agy", "models"]
-    assert "GEMINI_API_KEY" not in captured["environment"]
+    assert main(["models", "codex"], command_runner=runner) == 0
+
+    assert runner.calls == [(["resolved-codex", "debug", "models"], None, 20, None)]
+    assert capsys.readouterr().out == (
+        "codex: default=gpt-5.6-sol effort=xhigh discovery=official-cli\n"
+        "  gpt-5.6-sol\n"
+        "  gpt-5.6-terra\n"
+    )
+
+
+def test_claude_models_reports_effective_defaults_without_fabricated_catalog(capsys):
+    runner = FakeCommandRunner([])
+
+    assert main(["models", "claude"], command_runner=runner) == 0
+
+    assert runner.calls == []
+    assert capsys.readouterr().out == (
+        "claude: default=claude-opus-5 effort=xhigh "
+        "discovery=unsupported-by-cli\n"
+    )
+
+
+def test_gemini_model_discovery_is_bounded_runner_command(monkeypatch, capsys):
+    runner = FakeCommandRunner([command_result("gemini-2.5-pro\n")])
+    monkeypatch.setattr(
+        "facode_roundtable.cli.resolve_cli", lambda name: f"resolved-{name}"
+    )
+
+    assert main(["models", "gemini"], command_runner=runner) == 0
+
+    assert runner.calls == [(["resolved-agy", "models"], None, 20, None)]
+    assert capsys.readouterr().out == (
+        "gemini: default=cli-default effort=cli-default discovery=official-cli\n"
+        "  gemini-2.5-pro\n"
+    )
+
+
+def test_model_discovery_returns_typed_error_for_invalid_catalog(capsys):
+    runner = FakeCommandRunner([command_result("not-json")])
+
+    assert main(["models", "codex"], command_runner=runner) == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "roundtable: codex model discovery failed: invalid_response\n"
+    )
+
+
+def test_model_discovery_maps_runner_failures_to_typed_errors(capsys):
+    cases = (
+        (command_result(returncode=None, timed_out=True), "timeout"),
+        (command_result(returncode=127), "cli_not_found"),
+        (command_result(returncode=1), "provider_failed"),
+        (
+            CommandResult(
+                tuple(), 70, "", "too much", 1, False, "output_limit"
+            ),
+            "output_limit",
+        ),
+        (
+            CommandResult(
+                tuple(), 70, "", "cleanup failed", 1, False, "cleanup_failed"
+            ),
+            "cleanup_failed",
+        ),
+    )
+
+    for result, expected in cases:
+        assert main(
+            ["models", "codex"], command_runner=FakeCommandRunner([result])
+        ) == 3
+        assert capsys.readouterr().err == (
+            f"roundtable: codex model discovery failed: {expected}\n"
+        )
+
+
+def test_grok_model_discovery_fails_closed_on_zero_exit_login_message(capsys):
+    runner = FakeCommandRunner(
+        [
+            command_result(
+                "You are not authenticated.\n\n"
+                "Default model: grok-4.5\n\n"
+                "Available models:\n  * grok-4.5 (default)\n"
+            )
+        ]
+    )
+
+    assert main(["models", "grok"], command_runner=runner) == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "roundtable: grok model discovery failed: login_required\n"
+    )
+
+
+def test_plain_model_catalog_filters_banners_and_terminal_controls(capsys):
+    runner = FakeCommandRunner(
+        [
+            command_result(
+                "Fetching available models...\n"
+                "Available models:\n"
+                "  * gemini-3.1-pro-high (default)\n"
+                "  - gemini-3.6-flash-high\x9b\n"
+            )
+        ]
+    )
+
+    assert main(["models", "gemini"], command_runner=runner) == 0
+
+    assert capsys.readouterr().out == (
+        "gemini: default=cli-default effort=cli-default discovery=official-cli\n"
+        "  gemini-3.1-pro-high\n"
+        "  gemini-3.6-flash-high\n"
+    )
 
 
 def test_ask_uses_effective_config_defaults_and_cli_model_override(tmp_path, capsys):

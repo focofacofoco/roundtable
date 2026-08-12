@@ -107,6 +107,7 @@ class CommandResult:
     stderr: str
     duration_ms: int
     timed_out: bool
+    failure: str | None = None
 
 
 class CommandRunner:
@@ -157,7 +158,13 @@ class CommandRunner:
                 )
             except FileNotFoundError:
                 result = CommandResult(
-                    command, 127, "", "command not found", _elapsed(started), False
+                    command,
+                    127,
+                    "",
+                    "command not found",
+                    _elapsed(started),
+                    False,
+                    "cli_not_found",
                 )
             else:
                 try:
@@ -178,6 +185,7 @@ class CommandRunner:
                         f"provider output exceeded {self._max_output_bytes} bytes",
                         _elapsed(started),
                         False,
+                        "output_limit",
                     )
                 except TimeoutError:
                     await _terminate_tree(process)
@@ -188,6 +196,7 @@ class CommandRunner:
                         "provider timed out",
                         _elapsed(started),
                         True,
+                        "timeout",
                     )
                 except asyncio.CancelledError:
                     await asyncio.shield(_terminate_tree(process))
@@ -213,6 +222,7 @@ class CommandRunner:
                 returncode=70,
                 stdout="",
                 stderr="isolated workspace cleanup failed",
+                failure="cleanup_failed",
             )
         return result
 
@@ -230,6 +240,8 @@ async def _communicate_bounded(
     input_bytes: bytes | None,
     limit: int,
 ) -> tuple[bytes, bytes]:
+    total_size = 0
+
     async def feed_stdin() -> None:
         if input_bytes is None or process.stdin is None:
             return
@@ -242,16 +254,16 @@ async def _communicate_bounded(
             process.stdin.close()
 
     async def read_stream(stream: asyncio.StreamReader | None) -> bytes:
+        nonlocal total_size
         if stream is None:
             return b""
         chunks: list[bytes] = []
-        size = 0
         while True:
-            chunk = await stream.read(min(64 * 1024, limit - size + 1))
+            chunk = await stream.read(64 * 1024)
             if not chunk:
                 return b"".join(chunks)
-            size += len(chunk)
-            if size > limit:
+            total_size += len(chunk)
+            if total_size > limit:
                 raise _OutputLimitExceeded
             chunks.append(chunk)
 

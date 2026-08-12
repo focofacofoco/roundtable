@@ -19,8 +19,9 @@ _CONFIG_FIELDS = {
     "retention",
     "providers",
 }
-_PROVIDER_FIELDS = {"enabled", "model"}
+_PROVIDER_FIELDS = {"enabled", "model", "effort"}
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}\Z")
+_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 
 
 class ConfigError(ValueError):
@@ -31,42 +32,68 @@ class ConfigError(ValueError):
 class ProviderConfig:
     enabled: bool = True
     model: str | None = None
+    effort: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ProviderConfig":
+        if not isinstance(value, dict):
+            raise ConfigError("provider configuration must be an object")
         unknown = set(value) - _PROVIDER_FIELDS
         if unknown:
             raise ConfigError(f"unknown provider configuration field: {sorted(unknown)[0]}")
         enabled = value.get("enabled", True)
         model = value.get("model")
+        effort = value.get("effort")
         if not isinstance(enabled, bool):
             raise ConfigError("provider enabled must be boolean")
         if model is not None and (
             not isinstance(model, str) or not _MODEL_ID.fullmatch(model)
         ):
             raise ConfigError("provider model must be a safe model identifier or null")
-        return cls(enabled=enabled, model=model)
+        if effort is not None and (
+            not isinstance(effort, str) or effort not in _EFFORTS
+        ):
+            raise ConfigError(
+                "provider effort must be low, medium, high, xhigh, or null"
+            )
+        return cls(enabled=enabled, model=model, effort=effort)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"enabled": self.enabled, "model": self.model}
+        return {
+            "enabled": self.enabled,
+            "model": self.model,
+            "effort": self.effort,
+        }
+
+
+_PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "codex": {"model": "gpt-5.6-sol", "effort": "xhigh"},
+    "claude": {"model": "claude-opus-5", "effort": "xhigh"},
+}
+
+
+def default_provider_config(name: str) -> ProviderConfig:
+    return ProviderConfig(**_PROVIDER_DEFAULTS.get(name, {}))
+
+
+def _default_providers() -> dict[str, ProviderConfig]:
+    return {name: default_provider_config(name) for name in PROVIDERS}
 
 
 @dataclass(slots=True)
 class Config:
-    schema_version: int = 1
+    schema_version: int = 2
     default_heads: str | list[str] = "available"
     chair: str = "auto"
     concurrency: int = 5
     timeout_seconds: int = 300
     research_timeout_seconds: int = 600
     retention: str = "ephemeral"
-    providers: dict[str, ProviderConfig] = field(
-        default_factory=lambda: {name: ProviderConfig() for name in PROVIDERS}
-    )
+    providers: dict[str, ProviderConfig] = field(default_factory=_default_providers)
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ConfigError("schema_version must be 1")
+        if self.schema_version != 2:
+            raise ConfigError("schema_version must be 2")
         if self.default_heads != "available":
             if not isinstance(self.default_heads, list) or not self.default_heads:
                 raise ConfigError("default_heads must be 'available' or a non-empty list")
@@ -92,8 +119,15 @@ class Config:
         if unknown:
             raise ConfigError(f"unknown provider: {sorted(unknown)[0]}")
         self.providers = {
-            name: self.providers.get(name, ProviderConfig()) for name in PROVIDERS
+            name: self.providers.get(name, default_provider_config(name))
+            for name in PROVIDERS
         }
+        for name, provider in self.providers.items():
+            if (
+                provider.effort is not None
+                and "effort" not in _PROVIDER_DEFAULTS.get(name, {})
+            ):
+                raise ConfigError(f"provider effort is unsupported for {name}")
         if self.default_heads != "available":
             disabled = [name for name in self.default_heads if not self.providers[name].enabled]
             if disabled:
@@ -114,10 +148,39 @@ class Config:
         unknown_providers = set(raw_providers) - set(PROVIDERS)
         if unknown_providers:
             raise ConfigError(f"unknown provider: {sorted(unknown_providers)[0]}")
-        providers = {
-            name: ProviderConfig.from_dict(raw_providers.get(name, {})) for name in PROVIDERS
-        }
+        schema_version = value.get("schema_version")
+        if schema_version is None:
+            schema_version = (
+                2
+                if any(
+                    isinstance(provider, dict) and "effort" in provider
+                    for provider in raw_providers.values()
+                )
+                else 1
+            )
+        if (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version not in {1, 2}
+        ):
+            raise ConfigError("schema_version must be 1 or 2")
+        providers = {}
+        for name in PROVIDERS:
+            values = default_provider_config(name).to_dict()
+            raw_provider = raw_providers.get(name, {})
+            if not isinstance(raw_provider, dict):
+                raise ConfigError("provider configuration must be an object")
+            raw_provider = dict(raw_provider)
+            if (
+                schema_version == 1
+                and name in _PROVIDER_DEFAULTS
+                and raw_provider.get("model") is None
+            ):
+                raw_provider.pop("model", None)
+            values.update(raw_provider)
+            providers[name] = ProviderConfig.from_dict(values)
         kwargs = {key: val for key, val in value.items() if key != "providers"}
+        kwargs["schema_version"] = 2
         return cls(providers=providers, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:

@@ -148,6 +148,27 @@ def test_runner_bounds_provider_output(tmp_path):
     )
 
     assert result.returncode == 70
+    assert result.failure == "output_limit"
+    assert result.stdout == ""
+    assert result.stderr == "provider output exceeded 128 bytes"
+
+
+def test_runner_applies_output_limit_across_stdout_and_stderr(tmp_path):
+    script = tmp_path / "combined_output.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stdout.write('x' * 80)\n"
+        "sys.stderr.write('y' * 80)\n",
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(
+        CommandRunner(max_output_bytes=128).run(
+            [sys.executable, str(script)], timeout=10
+        )
+    )
+
+    assert result.failure == "output_limit"
     assert result.stdout == ""
     assert result.stderr == "provider output exceeded 128 bytes"
 

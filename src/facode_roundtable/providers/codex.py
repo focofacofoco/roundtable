@@ -28,9 +28,18 @@ _DISABLED_FEATURES = (
 class CodexAdapter:
     name = "codex"
 
-    def __init__(self, runner: Runner, executable: str = "codex"):
+    def __init__(
+        self,
+        runner: Runner,
+        executable: str = "codex",
+        *,
+        default_model: str | None = None,
+        default_effort: str | None = None,
+    ):
         self.runner = runner
         self.executable = executable
+        self.default_model = default_model
+        self.default_effort = default_effort
 
     async def status(self) -> ProviderStatus:
         result = await self.runner.run([self.executable, "login", "status"], timeout=15)
@@ -45,6 +54,7 @@ class CodexAdapter:
                 True,
                 auth_method="chatgpt",
                 cli_version=version,
+                model=self.default_model,
                 research=False,
             )
         if "api key" in output or "api_key" in output:
@@ -54,9 +64,15 @@ class CodexAdapter:
                 False,
                 reason="api_key_auth_forbidden",
                 cli_version=version,
+                model=self.default_model,
             )
         return ProviderStatus(
-            self.name, True, False, reason="login_required", cli_version=version
+            self.name,
+            True,
+            False,
+            reason="login_required",
+            cli_version=version,
+            model=self.default_model,
         )
 
     async def invoke(
@@ -64,6 +80,7 @@ class CodexAdapter:
     ) -> InvocationResult:
         if research:
             raise ProviderError("research_ineligible", "codex cannot prove web-only tool access")
+        selected_model = model or self.default_model
         argv = [
             self.executable,
             "exec",
@@ -77,8 +94,12 @@ class CodexAdapter:
         for feature in _DISABLED_FEATURES:
             argv.extend(["--disable", feature])
         argv.extend(["--config", 'web_search="disabled"'])
-        if model:
-            argv.extend(["--model", model])
+        if self.default_effort:
+            argv.extend(
+                ["--config", f'model_reasoning_effort="{self.default_effort}"']
+            )
+        if selected_model:
+            argv.extend(["--model", selected_model])
         argv.extend(["--json", "-"])
         result = await self.runner.run(argv, input_text=prompt, timeout=timeout)
         if result.timed_out:
@@ -88,7 +109,11 @@ class CodexAdapter:
         content = _parse_output(result.stdout)
         if not content:
             raise ProviderError("empty_response", "codex returned no answer")
-        return InvocationResult(content=content, model=model, duration_ms=result.duration_ms)
+        return InvocationResult(
+            content=content,
+            model=selected_model,
+            duration_ms=result.duration_ms,
+        )
 
 
 def _parse_output(output: str) -> str:

@@ -71,6 +71,25 @@ def test_codex_invocation_is_ephemeral_isolated_and_parses_json_events():
     assert argv[-2:] == ["--json", "-"]
 
 
+def test_codex_applies_configured_model_and_xhigh_effort_under_isolation():
+    output = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "Ready"}}
+    )
+    runner = RecordingRunner([result(output)])
+    adapter = CodexAdapter(
+        runner,
+        default_model="gpt-5.6-sol",
+        default_effort="xhigh",
+    )
+
+    response = asyncio.run(adapter.invoke("Question", timeout=20))
+    argv, _ = runner.calls[0]
+
+    assert response.model == "gpt-5.6-sol"
+    assert ["--config", 'model_reasoning_effort="xhigh"'] == argv[-6:-4]
+    assert ["--model", "gpt-5.6-sol"] == argv[-4:-2]
+
+
 def test_claude_requires_first_party_login_and_invocation_disables_local_tools():
     status_runner = RecordingRunner(
         [
@@ -93,6 +112,23 @@ def test_claude_requires_first_party_login_and_invocation_disables_local_tools()
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
         "--tools", "", "--permission-mode", "dontAsk", "--safe-mode",
     ]
+
+
+def test_claude_applies_configured_model_and_xhigh_effort():
+    runner = RecordingRunner(
+        [result(json.dumps({"result": "Ready", "is_error": False}))]
+    )
+    adapter = ClaudeAdapter(
+        runner,
+        default_model="claude-opus-5",
+        default_effort="xhigh",
+    )
+
+    response = asyncio.run(adapter.invoke("Question", timeout=20))
+    argv, _ = runner.calls[0]
+
+    assert response.model == "claude-opus-5"
+    assert argv[-4:] == ["--model", "claude-opus-5", "--effort", "xhigh"]
 
 
 def test_grok_requires_oauth_and_disable_api_key_policy():

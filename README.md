@@ -33,6 +33,8 @@ GLM is intentionally unsupported until an official login-authenticated headless 
 
 ```text
 roundtable providers
+roundtable models codex
+roundtable models claude
 roundtable auth status
 roundtable auth login grok
 roundtable doctor
@@ -45,6 +47,28 @@ roundtable ask -q "..." --research
 Research is fail-closed. A provider participates only when Roundtable can constrain it to web tools while denying local file, command and MCP tools.
 
 OAuth/browser consent remains inside the official provider CLI. Roundtable never receives or stores the resulting credentials. A provider stays ineligible until `roundtable providers` can prove the supported first-party login method.
+
+`roundtable models codex`, `roundtable models grok`, and `roundtable models gemini`
+query the installed official CLI with bounded output and a sanitized environment. An installed
+CLI must be logged in for account-scoped discovery. Claude and MiniMax do not expose a headless
+model-catalog command, so Roundtable reports that limitation without fabricating aliases.
+
+## Configuration
+
+Roundtable defaults Codex to `gpt-5.6-sol` at `xhigh` effort and Claude to
+`claude-opus-5` at `xhigh` effort. These values live in the same provider configuration used
+by the CLI, MCP server, adapters, and `roundtable models` output.
+
+```text
+roundtable config show
+roundtable config set providers.codex.model gpt-5.6-sol
+roundtable config set providers.codex.effort xhigh
+roundtable config set providers.claude.model claude-opus-5
+roundtable config set providers.claude.effort xhigh
+```
+
+Set a model or effort to `null` to defer to that provider CLI. Per-run model overrides still
+use `--model provider=id`. Authentication remains login-only in every case.
 
 ## Output and privacy
 

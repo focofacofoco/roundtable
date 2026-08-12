@@ -11,7 +11,7 @@ _CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 
-def _terminal_safe(value: str) -> str:
+def terminal_safe(value: str) -> str:
     return _CONTROL.sub("", _CSI.sub("", _OSC.sub("", value)))
 
 
@@ -27,13 +27,13 @@ def render_markdown(result: RunResult) -> str:
             lines.extend([f"# Round {response.round}", ""])
         current_round = response.round
         lines.extend(
-            [f"## {response.provider.title()}", "", _terminal_safe(response.content), ""]
+            [f"## {response.provider.title()}", "", terminal_safe(response.content), ""]
         )
     if result.errors:
         lines.extend(["## Errors", ""])
         for error in result.errors:
             lines.append(
-                f"- `{error.provider}` — `{error.code}`: {_terminal_safe(error.message)}"
+                f"- `{error.provider}` — `{error.code}`: {terminal_safe(error.message)}"
             )
         lines.append("")
     if result.chair:
@@ -43,7 +43,7 @@ def render_markdown(result: RunResult) -> str:
                 "",
                 f"**Verdict:** `{result.chair.verdict}`",
                 "",
-                _terminal_safe(result.chair.recommendation),
+                terminal_safe(result.chair.recommendation),
                 "",
             ]
         )

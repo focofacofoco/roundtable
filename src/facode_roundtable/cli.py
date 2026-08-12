@@ -5,27 +5,40 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Sequence
 
 from facode_roundtable import __version__
-from facode_roundtable.config import Config, ConfigError, config_path, load_config, save_config
+from facode_roundtable.config import (
+    PROVIDERS,
+    Config,
+    ConfigError,
+    config_path,
+    load_config,
+    save_config,
+)
 from facode_roundtable.executables import resolve_cli
 from facode_roundtable.harness import HarnessManager
 from facode_roundtable.models import ExitCode
+from facode_roundtable.providers.base import Runner
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
 from facode_roundtable.providers.gemini import GeminiAdapter
 from facode_roundtable.providers.grok import GrokAdapter
 from facode_roundtable.providers.minimax import MiniMaxAdapter
-from facode_roundtable.render import render_json, render_markdown
-from facode_roundtable.runner import CommandRunner, sanitize_environment
+from facode_roundtable.render import render_json, render_markdown, terminal_safe
+from facode_roundtable.runner import CommandResult, CommandRunner, sanitize_environment
 from facode_roundtable.service import MAX_PROMPT_BYTES, RoundtableService
 
 
 WINDOWS = os.name == "nt"
 _UPDATE_SOURCE = "https://github.com/focofacofoco/roundtable/archive/refs/heads/main.zip"
+_MODEL_ID = r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}"
+_BULLET_MODEL = re.compile(
+    rf"^\s*[*-]\s+(?P<model>{_MODEL_ID})(?:\s+\(default\))?\s*$"
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -81,10 +94,22 @@ def _parser() -> argparse.ArgumentParser:
 def default_service(config: Config | None = None) -> RoundtableService:
     effective = config or Config()
     runner = CommandRunner()
+    codex = effective.providers["codex"]
+    claude = effective.providers["claude"]
     return RoundtableService(
         {
-            "codex": CodexAdapter(runner, resolve_cli("codex")),
-            "claude": ClaudeAdapter(runner, resolve_cli("claude")),
+            "codex": CodexAdapter(
+                runner,
+                resolve_cli("codex"),
+                default_model=codex.model,
+                default_effort=codex.effort,
+            ),
+            "claude": ClaudeAdapter(
+                runner,
+                resolve_cli("claude"),
+                default_model=claude.model,
+                default_effort=claude.effort,
+            ),
             "grok": GrokAdapter(runner, resolve_cli("grok")),
             "gemini": GeminiAdapter(runner, resolve_cli("agy")),
             "minimax": MiniMaxAdapter(runner, resolve_cli("mmx")),
@@ -102,6 +127,7 @@ def main(
     service: RoundtableService | None = None,
     config_file: Path | None = None,
     harness_manager: HarnessManager | None = None,
+    command_runner: Runner | None = None,
 ) -> int:
     args = _parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "version":
@@ -122,20 +148,28 @@ def main(
     if args.command == "config":
         return _config(args, config_file)
     if args.command == "doctor":
-        application = service or default_service()
+        try:
+            doctor_config = load_config(config_file)
+        except ConfigError:
+            doctor_config = Config()
+        application = service or default_service(doctor_config)
         return _doctor(application, as_json=args.json, live=args.live, path=config_file)
     try:
         effective_config = load_config(config_file)
     except ConfigError as exc:
         print(f"roundtable: {exc}", file=sys.stderr)
         return 2
+    if args.command == "models":
+        return _list_models(
+            args.provider,
+            effective_config,
+            command_runner or CommandRunner(max_output_bytes=1024 * 1024),
+        )
     application = service or default_service(effective_config)
     if args.command == "providers":
         return _providers(application, as_json=args.json)
     if args.command == "auth":
         return _auth(application, args.auth_command, args.provider)
-    if args.command == "models":
-        return _list_models(args.provider)
     if args.command == "mcp":
         from facode_roundtable.mcp_server import serve
 
@@ -148,7 +182,7 @@ def main(
         models = {
             name: provider.model
             for name, provider in effective_config.providers.items()
-            if provider.model is not None
+            if provider.model is not None and name in heads
         }
         models.update(_models(args.model))
         result = asyncio.run(
@@ -358,20 +392,136 @@ def _auth(service: RoundtableService, command: str, provider: str | None) -> int
         return 3
 
 
-def _list_models(provider: str | None) -> int:
-    if provider == "gemini":
-        try:
-            return subprocess.run(
-                [resolve_cli("agy"), "models"],
-                check=False,
-                env=sanitize_environment(os.environ),
-            ).returncode
-        except FileNotFoundError:
-            return 3
-    selected = [provider] if provider else ["codex", "claude", "grok", "gemini", "minimax"]
-    for name in selected:
-        print(f"{name}: discovery=unsupported" if name != "gemini" else "gemini: run `roundtable models gemini`")
-    return 0
+def _list_models(provider: str | None, config: Config, runner: Runner) -> int:
+    if provider is not None and provider not in PROVIDERS:
+        print(f"roundtable: unknown provider: {provider}", file=sys.stderr)
+        return 2
+    selected = [provider] if provider else list(PROVIDERS)
+    try:
+        return asyncio.run(_list_models_async(selected, config, runner))
+    except KeyboardInterrupt:
+        print("roundtable: interrupted", file=sys.stderr)
+        return int(ExitCode.INTERRUPTED)
+
+
+async def _list_models_async(
+    providers: list[str], config: Config, runner: Runner
+) -> int:
+    failed = False
+    for name in providers:
+        settings = config.providers[name]
+        if name in {"claude", "minimax"}:
+            print(
+                _model_catalog_header(
+                    name,
+                    settings.model,
+                    settings.effort,
+                    "unsupported-by-cli",
+                )
+            )
+            continue
+        executable = "agy" if name == "gemini" else name
+        command = (
+            [resolve_cli(executable), "debug", "models"]
+            if name == "codex"
+            else [resolve_cli(executable), "models"]
+        )
+        result = await runner.run(
+            command,
+            timeout=20,
+            environment={"GROK_DISABLE_API_KEY_AUTH": "1"} if name == "grok" else None,
+        )
+        error = _model_discovery_error(result)
+        models: list[str] | None = None
+        if error is None and name == "codex":
+            models = _codex_models(result.stdout)
+            if models is None:
+                error = "invalid_response"
+        elif error is None:
+            models = _plain_cli_models(result.stdout)
+            if models is None:
+                error = "invalid_response"
+        if error is not None:
+            print(
+                f"roundtable: {name} model discovery failed: {error}",
+                file=sys.stderr,
+            )
+            failed = True
+            continue
+        print(_model_catalog_header(name, settings.model, settings.effort, "official-cli"))
+        for model in models:
+            print(f"  {model}")
+    return 3 if failed else 0
+
+
+def _model_catalog_header(
+    provider: str,
+    model: str | None,
+    effort: str | None,
+    discovery: str,
+) -> str:
+    return (
+        f"{provider}: default={model or 'cli-default'} "
+        f"effort={effort or 'cli-default'} discovery={discovery}"
+    )
+
+
+def _model_discovery_error(result: CommandResult) -> str | None:
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    if any(
+        marker in output
+        for marker in (
+            "not authenticated",
+            "please sign in",
+            "login required",
+            "please log in",
+        )
+    ):
+        return "login_required"
+    if result.failure is not None:
+        return result.failure
+    if result.timed_out:
+        return "timeout"
+    if result.returncode == 127:
+        return "cli_not_found"
+    if result.returncode != 0:
+        return "provider_failed"
+    return None
+
+
+def _codex_models(output: str) -> list[str] | None:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        return None
+    models: list[str] = []
+    for item in payload["models"]:
+        if not isinstance(item, dict) or item.get("visibility") != "list":
+            continue
+        slug = item.get("slug")
+        if (
+            isinstance(slug, str)
+            and re.fullmatch(_MODEL_ID, slug)
+            and slug not in models
+        ):
+            models.append(slug)
+    return models or None
+
+
+def _plain_cli_models(output: str) -> list[str] | None:
+    models: list[str] = []
+    for line in terminal_safe(output).splitlines():
+        match = _BULLET_MODEL.fullmatch(line)
+        if match:
+            model = match.group("model")
+        else:
+            candidate = line.strip()
+            model = candidate if re.fullmatch(_MODEL_ID, candidate) and "-" in candidate else None
+        if model is not None and model not in models:
+            models.append(model)
+    return models or None
 
 
 def _config(args: argparse.Namespace, path: Path | None) -> int:
