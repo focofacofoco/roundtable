@@ -20,7 +20,7 @@ Convene login-authenticated official model CLIs through `roundtable ask` or the 
 
 Default to one blind advisory round. Use two or three rounds only when cross-examination is material. Research is fail-closed: heads without provable web-only isolation are excluded.
 
-Report each answer, failures, chair verdict, agreement, dissent, and a decided synthesis. Never request or accept API keys; authentication belongs exclusively to each official CLI login flow. Check readiness with `roundtable providers` or `roundtable doctor`.
+Report each answer, failures, chair verdict, agreement, dissent, claim ledger, and resolution record. Preserve the distinction between provider-reported evidence and externally verified fact. Never request or accept API keys; authentication belongs exclusively to each official CLI login flow. Check readiness with `roundtable providers` or `roundtable doctor`.
 
 ## Common mistakes
 

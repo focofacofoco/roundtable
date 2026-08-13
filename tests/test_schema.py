@@ -60,6 +60,34 @@ def test_archived_v2_schema_remains_valid():
     )
 
 
+def test_archived_schemas_validate_historical_chair_shapes():
+    root = Path(__file__).parents[1]
+    result = asyncio.run(
+        RoundtableService({"codex": SchemaAdapter()}).ask(
+            "Question", heads=["codex"]
+        )
+    ).to_dict()
+    v1 = dict(result, schema_version=1)
+    v2 = dict(result, schema_version=2)
+    v2["chair"] = {
+        "chair": "claude",
+        "verdict": "INSUFFICIENT_EVIDENCE",
+        "agreed": [],
+        "dissent": [],
+        "recommendation": "Not enough evidence.",
+        "claims": [],
+    }
+
+    Draft202012Validator(
+        json.loads((root / "docs" / "run-result-v1.schema.json").read_text(encoding="utf-8")),
+        format_checker=FormatChecker(),
+    ).validate(v1)
+    Draft202012Validator(
+        json.loads((root / "docs" / "run-result-v2.schema.json").read_text(encoding="utf-8")),
+        format_checker=FormatChecker(),
+    ).validate(v2)
+
+
 def test_claim_ledger_matches_published_json_schema():
     class LedgerAdapter(SchemaAdapter):
         async def invoke(self, prompt, *, timeout, model=None, research=False):
