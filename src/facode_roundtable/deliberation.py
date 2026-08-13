@@ -92,7 +92,14 @@ def chair_prompt(
         "question": question,
         "round": round_number,
         "positions": [
-            {"participant": aliases[response.provider], "content": response.content}
+            {
+                "participant": aliases[response.provider],
+                "content": response.content,
+                "citations": [
+                    {"url": citation.url, "title": citation.title}
+                    for citation in response.citations
+                ],
+            }
             for response in responses
         ],
     }
@@ -107,8 +114,7 @@ def chair_prompt(
             if can_continue
             else "CONTINUE is unavailable because this is the final round. "
         )
-        +
-        "agreed and dissent must be disjoint arrays of participant aliases from the data. "
+        + "agreed and dissent must be disjoint arrays of participant aliases from the data. "
         "claims must be an array of objects with exactly id, statement, supporters, "
         "dissenters, evidence. IDs must be claim-1, claim-2, and so on in array order. "
         "Evidence objects have exactly url, providers, relation; relation is supports or "

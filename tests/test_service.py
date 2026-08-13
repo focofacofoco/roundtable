@@ -5,7 +5,7 @@ import time
 
 from facode_roundtable.models import Citation, ExitCode, ProviderResponse
 from facode_roundtable.providers.base import InvocationResult, ProviderError, ProviderStatus
-from facode_roundtable.service import RoundtableService, _parse_chair
+from facode_roundtable.service import RoundtableService, _chair_prompt, _parse_chair
 
 
 class FakeAdapter:
@@ -521,6 +521,25 @@ def test_chair_builds_claim_ledger_with_validated_provider_reported_evidence():
     assert claim.status == "disputed"
     assert claim.evidence[0].providers == ["codex"]
     assert claim.evidence[1].relation == "contradicts"
+
+
+def test_chair_receives_typed_citations_under_opaque_participants():
+    responses = [
+        ProviderResponse(
+            "codex",
+            "Evidence",
+            1,
+            citations=[Citation("https://example.com/source", title="Source")],
+        ),
+        ProviderResponse("claude", "No citation", 1),
+    ]
+
+    prompt = _chair_prompt("Question", 1, responses, can_continue=True)
+
+    assert '"participant": "participant-1"' in prompt
+    assert '"url": "https://example.com/source"' in prompt
+    assert '"title": "Source"' in prompt
+    assert "codex" not in prompt.lower()
 
 
 def test_chair_rejects_evidence_not_reported_by_the_named_provider():
