@@ -542,6 +542,61 @@ def test_chair_receives_typed_citations_under_opaque_participants():
     assert "codex" not in prompt.lower()
 
 
+def test_final_chair_can_link_citations_reported_in_an_earlier_round():
+    codex = ScriptedAdapter(
+        "codex",
+        ["Evidence https://example.com/source", "Still supported"],
+    )
+    claude = ScriptedAdapter(
+        "claude",
+        [
+            "Initial challenge",
+            '{"verdict":"CONTINUE","agreed":[],"dissent":'
+            '["participant-1","participant-2"],"recommendation":"Reassess.",'
+            '"claims":[{"id":"claim-1","statement":"The evidence is sufficient.",'
+            '"supporters":["participant-1"],"dissenters":["participant-2"],'
+            '"evidence":[{"url":"https://example.com/source","providers":'
+            '["participant-1"],"relation":"supports"}]}],"rationale_claims":[],'
+            '"alternatives":[],"tradeoffs":[],"review_conditions":[]}',
+            "Now supported",
+            '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],'
+            '"dissent":[],"recommendation":"Ship.","claims":[{"id":"claim-1",'
+            '"statement":"The evidence is sufficient.","supporters":'
+            '["participant-1","participant-2"],"dissenters":[],"evidence":'
+            '[{"url":"https://example.com/source","providers":["participant-1"],'
+            '"relation":"supports"}]}],"rationale_claims":["claim-1"],'
+            '"alternatives":[],"tradeoffs":[],"review_conditions":[]}',
+        ],
+    )
+
+    result = asyncio.run(
+        RoundtableService({"codex": codex, "claude": claude}).ask(
+            "Question", heads=["codex", "claude"], rounds=2, research=True
+        )
+    )
+
+    assert result.chair is not None
+    assert result.chair.verdict == "CONSENSUS"
+    assert result.chair.claims[0].evidence[0].url == "https://example.com/source"
+
+
+def test_consensus_rejects_a_disputed_claim():
+    responses = [
+        ProviderResponse("codex", "One", 1),
+        ProviderResponse("claude", "Two", 1),
+    ]
+    content = (
+        '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],'
+        '"dissent":[],"recommendation":"Ship.","claims":[{"id":"claim-1",'
+        '"statement":"Disputed.","supporters":["participant-1"],'
+        '"dissenters":["participant-2"],"evidence":[]}],'
+        '"rationale_claims":["claim-1"],"alternatives":[],"tradeoffs":[],'
+        '"review_conditions":[]}'
+    )
+
+    assert _parse_chair(content, "claude", responses, resolution=True) is None
+
+
 def test_chair_rejects_evidence_not_reported_by_the_named_provider():
     responses = [
         ProviderResponse("codex", "One", 1),

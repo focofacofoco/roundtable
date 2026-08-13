@@ -132,6 +132,7 @@ class RoundtableService:
                 eligible.append(name)
         result.eligible_heads = eligible
         round_prompt = base_prompt
+        citations_by_provider: dict[str, list[Citation]] = {}
         for round_number in range(1, rounds + 1):
             round_responses = await self._run_round(
                 eligible,
@@ -145,6 +146,25 @@ class RoundtableService:
             )
             if rounds == 1:
                 break
+            for response in round_responses:
+                known = citations_by_provider.setdefault(response.provider, [])
+                known_urls = {citation.url for citation in known}
+                known.extend(
+                    citation
+                    for citation in response.citations
+                    if citation.url not in known_urls
+                )
+            chair_responses = [
+                ProviderResponse(
+                    provider=response.provider,
+                    content=response.content,
+                    round=response.round,
+                    model=response.model,
+                    duration_ms=response.duration_ms,
+                    citations=list(citations_by_provider[response.provider]),
+                )
+                for response in round_responses
+            ]
             participants = [response.provider for response in round_responses]
             if len(participants) < 2:
                 result.errors.append(
@@ -178,7 +198,7 @@ class RoundtableService:
                 _chair_prompt(
                     question,
                     round_number,
-                    round_responses,
+                    chair_responses,
                     can_continue=round_number < rounds,
                 ),
                 deadline=deadline,
@@ -204,7 +224,7 @@ class RoundtableService:
             parsed_chair = _parse_chair(
                 chair_invocation.content,
                 chair_name,
-                round_responses,
+                chair_responses,
                 resolution=True,
             )
             if parsed_chair is None:
