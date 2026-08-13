@@ -198,8 +198,6 @@ def parse_chair(
         if claim is None:
             return None
         claims.append(claim)
-    if verdict == "CONSENSUS" and any(claim.status == "disputed" for claim in claims):
-        return None
     if verdict == "SPLIT" and not any(claim.status == "disputed" for claim in claims):
         return None
     rationale_claims: list[str] = []

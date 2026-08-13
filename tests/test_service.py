@@ -619,6 +619,28 @@ def test_consensus_allows_unresolved_context_outside_the_rationale():
     assert [claim.status for claim in parsed.claims] == ["agreed", "unresolved"]
 
 
+def test_consensus_allows_disputed_context_outside_the_rationale():
+    responses = [
+        ProviderResponse("codex", "One", 1),
+        ProviderResponse("claude", "Two", 1),
+    ]
+    content = (
+        '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],'
+        '"dissent":[],"recommendation":"Ship.","claims":[{"id":"claim-1",'
+        '"statement":"Agreed basis.","supporters":'
+        '["participant-1","participant-2"],"dissenters":[],"evidence":[]},'
+        '{"id":"claim-2","statement":"Ancillary dispute.",'
+        '"supporters":["participant-1"],"dissenters":["participant-2"],'
+        '"evidence":[]}],"rationale_claims":["claim-1"],"alternatives":[],'
+        '"tradeoffs":[],"review_conditions":[]}'
+    )
+
+    parsed = _parse_chair(content, "claude", responses, resolution=True)
+
+    assert parsed is not None
+    assert [claim.status for claim in parsed.claims] == ["agreed", "disputed"]
+
+
 def test_chair_rejects_evidence_not_reported_by_the_named_provider():
     responses = [
         ProviderResponse("codex", "One", 1),
