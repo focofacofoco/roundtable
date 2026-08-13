@@ -18,7 +18,7 @@ Convene login-authenticated official model CLIs through `roundtable ask` or the 
 | Current web facts | `roundtable ask "QUESTION" --research` |
 | Machine output | `roundtable ask "QUESTION" --format json` |
 
-Default to one blind advisory round. Use two or three rounds only when cross-examination is material. Research is fail-closed: heads without provable web-only isolation are excluded.
+The configured default uses Codex and Claude for up to three rounds, stopping early on a resolved verdict. Research is fail-closed: heads without provable web-only isolation are excluded. Codex supports isolated web research only on Windows; Claude permits only `WebSearch` and `WebFetch`. Web access applies only to the first round.
 
 Report each answer, failures, chair verdict, agreement, dissent, claim ledger, and resolution record. Preserve the distinction between provider-reported evidence and externally verified fact. Never request or accept API keys; authentication belongs exclusively to each official CLI login flow. Check readiness with `roundtable providers` or `roundtable doctor`.
 

@@ -50,7 +50,10 @@ roundtable ask -q "..." --research
 eligible providers return exactly `OK`. Its content-free receipt includes provider/model
 outcomes, durations, runtime evidence, and a deterministic package fingerprint.
 
-Research is fail-closed. A provider participates only when Roundtable can constrain it to web tools while denying local file, command and MCP tools.
+Research is fail-closed. A provider participates only when Roundtable can constrain it to web
+tools while denying local file, command and MCP tools. On Windows, Codex uses native live web
+search through `codex --search exec`; on other platforms it reports research as unavailable.
+Claude permits only `WebSearch` and `WebFetch`.
 
 Each operation has one total deadline covering status probes, queue time, rounds, and chair
 work. The configured concurrency limit is shared by status and inference operations.
