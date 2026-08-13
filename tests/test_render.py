@@ -68,3 +68,26 @@ def test_markdown_renders_claim_ledger_from_chair_result():
     assert "Option A is ready." in markdown
     assert "https://example.com/source" in markdown
     assert "supports — codex" in markdown
+
+
+def test_markdown_renders_resolution_record_by_claim_reference():
+    result = RunResult.create("Question", ["codex", "claude"], "deliberation")
+    result.chair = ChairResult(
+        "claude",
+        "CONSENSUS",
+        agreed=["codex", "claude"],
+        recommendation="Ship.",
+        claims=[ClaimRecord("claim-1", "Ready.", ["codex", "claude"], [], "agreed")],
+        rationale_claims=["claim-1"],
+        alternatives=["Wait."],
+        tradeoffs=["Speed versus observation."],
+        review_conditions=["A blocker appears."],
+    )
+
+    markdown = render_markdown(result)
+
+    assert "## Resolution" in markdown
+    assert "Rationale claims: claim-1" in markdown
+    assert "- Wait." in markdown
+    assert "- Speed versus observation." in markdown
+    assert "- A blocker appears." in markdown

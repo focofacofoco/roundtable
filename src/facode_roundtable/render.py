@@ -72,4 +72,28 @@ def render_markdown(result: RunResult) -> str:
                         f"({evidence.relation} — {', '.join(evidence.providers)})"
                     )
                 lines.append("")
+        if any(
+            (
+                result.chair.rationale_claims,
+                result.chair.alternatives,
+                result.chair.tradeoffs,
+                result.chair.review_conditions,
+            )
+        ):
+            lines.extend(["## Resolution", ""])
+            if result.chair.rationale_claims:
+                lines.extend(
+                    [
+                        "Rationale claims: "
+                        + ", ".join(result.chair.rationale_claims),
+                        "",
+                    ]
+                )
+            for title, items in (
+                ("Alternatives", result.chair.alternatives),
+                ("Trade-offs", result.chair.tradeoffs),
+                ("Review conditions", result.chair.review_conditions),
+            ):
+                if items:
+                    lines.extend([f"### {title}", *[f"- {terminal_safe(item)}" for item in items], ""])
     return "\n".join(lines).rstrip() + "\n"

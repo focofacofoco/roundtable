@@ -73,6 +73,10 @@ class ChairResult:
     dissent: list[str] = field(default_factory=list)
     recommendation: str = ""
     claims: list[ClaimRecord] = field(default_factory=list)
+    rationale_claims: list[str] = field(default_factory=list)
+    alternatives: list[str] = field(default_factory=list)
+    tradeoffs: list[str] = field(default_factory=list)
+    review_conditions: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -95,7 +99,7 @@ class RunResult:
     @classmethod
     def create(cls, question: str, requested_heads: list[str], mode: str = "advisory") -> "RunResult":
         return cls(
-            schema_version=2,
+            schema_version=3,
             run_id=str(uuid.uuid4()),
             mode=mode,
             question_hash=hashlib.sha256(question.encode("utf-8")).hexdigest(),

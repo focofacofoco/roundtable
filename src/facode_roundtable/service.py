@@ -175,7 +175,12 @@ class RoundtableService:
                 break
             chair_invocation, chair_error = await self._invoke_one(
                 chair_name,
-                _chair_prompt(question, round_number, round_responses),
+                _chair_prompt(
+                    question,
+                    round_number,
+                    round_responses,
+                    can_continue=round_number < rounds,
+                ),
                 deadline=deadline,
                 model=selected_models.get(chair_name),
                 research=False,
@@ -197,7 +202,10 @@ class RoundtableService:
                 break
             assert chair_invocation is not None
             parsed_chair = _parse_chair(
-                chair_invocation.content, chair_name, round_responses
+                chair_invocation.content,
+                chair_name,
+                round_responses,
+                resolution=True,
             )
             if parsed_chair is None:
                 result.errors.append(

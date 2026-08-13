@@ -206,10 +206,16 @@ def test_deliberation_keeps_round_one_blind_then_stops_on_chair_consensus():
             '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
             '"recommendation":"Reconsider.","claims":[{"id":"claim-1",'
             '"statement":"Resolve the disagreement.","supporters":["participant-1"],'
-            '"dissenters":["participant-2"],"evidence":[]}]}',
+            '"dissenters":["participant-2"],"evidence":[]}],'
+            '"rationale_claims":[],"alternatives":[],"tradeoffs":[],'
+            '"review_conditions":[]}',
             "Claude R2",
             '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
-            '"recommendation":"Ship option A.","claims":[]}',
+            '"recommendation":"Ship option A.","claims":[{"id":"claim-1",'
+            '"statement":"Option A is ready.","supporters":'
+            '["participant-1","participant-2"],"dissenters":[],"evidence":[]}],'
+            '"rationale_claims":["claim-1"],"alternatives":[],"tradeoffs":[],'
+            '"review_conditions":[]}',
         ],
     )
     service = RoundtableService({"codex": codex, "claude": claude})
@@ -241,10 +247,15 @@ def test_later_rounds_hide_provider_identity_and_remap_valid_aliases():
             '["participant-1","participant-2"],"recommendation":"Reconsider.",'
             '"claims":[{"id":"claim-1","statement":"Resolve the disagreement.",'
             '"supporters":["participant-1"],"dissenters":["participant-2"],'
-            '"evidence":[]}]}',
+            '"evidence":[]}],"rationale_claims":[],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
             "Revised two",
             '{"verdict":"CONSENSUS","agreed":'
-            '["participant-1","participant-2"],"dissent":[],"recommendation":"Ship.","claims":[]}',
+            '["participant-1","participant-2"],"dissent":[],"recommendation":"Ship.",'
+            '"claims":[{"id":"claim-1","statement":"Ready.","supporters":'
+            '["participant-1","participant-2"],"dissenters":[],"evidence":[]}],'
+            '"rationale_claims":["claim-1"],"alternatives":[],"tradeoffs":[],'
+            '"review_conditions":[]}',
         ],
     )
 
@@ -295,7 +306,10 @@ def test_auto_chair_priority_is_stable_not_mapping_or_head_order():
         [
             "A",
             '{"verdict":"CONSENSUS","agreed":["participant-2","participant-1"],'
-            '"dissent":[],"recommendation":"Done.","claims":[]}',
+            '"dissent":[],"recommendation":"Done.","claims":[{"id":"claim-1",'
+            '"statement":"Done.","supporters":["participant-1","participant-2"],'
+            '"dissenters":[],"evidence":[]}],"rationale_claims":["claim-1"],'
+            '"alternatives":[],"tradeoffs":[],"review_conditions":[]}',
         ],
     )
 
@@ -438,10 +452,15 @@ def test_research_tools_are_disabled_after_the_independent_first_round():
             '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
             '"recommendation":"Continue.","claims":[{"id":"claim-1",'
             '"statement":"Resolve the disagreement.","supporters":["participant-1"],'
-            '"dissenters":["participant-2"],"evidence":[]}]}',
+            '"dissenters":["participant-2"],"evidence":[]}],'
+            '"rationale_claims":[],"alternatives":[],"tradeoffs":[],'
+            '"review_conditions":[]}',
             "A2",
             '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
-            '"recommendation":"Done.","claims":[]}',
+            '"recommendation":"Done.","claims":[{"id":"claim-1",'
+            '"statement":"Done.","supporters":["participant-1","participant-2"],'
+            '"dissenters":[],"evidence":[]}],"rationale_claims":["claim-1"],'
+            '"alternatives":[],"tradeoffs":[],"review_conditions":[]}',
         ],
     )
 
@@ -533,11 +552,15 @@ def test_continuation_focuses_only_non_agreed_claims_and_keeps_raw_positions():
             '"supporters":["participant-1","participant-2"],"dissenters":[],'
             '"evidence":[]},{"id":"claim-2","statement":"Disputed choice.",'
             '"supporters":["participant-1"],"dissenters":["participant-2"],'
-            '"evidence":[]}]}',
+            '"evidence":[]}],"rationale_claims":[],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
             "Two revised",
             '{"verdict":"SPLIT","agreed":["participant-1"],'
             '"dissent":["participant-2"],"recommendation":"Still split.",'
-            '"claims":[]}',
+            '"claims":[{"id":"claim-1","statement":"Still split.",'
+            '"supporters":["participant-1"],"dissenters":["participant-2"],'
+            '"evidence":[]}],"rationale_claims":["claim-1"],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
         ],
     )
 
@@ -565,7 +588,8 @@ def test_continue_without_focus_fails_closed_before_another_round():
             '["participant-1","participant-2"],"recommendation":"Continue.",'
             '"claims":[{"id":"claim-1","statement":"Shared fact.",'
             '"supporters":["participant-1","participant-2"],"dissenters":[],'
-            '"evidence":[]}]}',
+            '"evidence":[]}],"rationale_claims":[],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
         ],
     )
 
@@ -591,13 +615,15 @@ def test_continue_is_invalid_when_no_round_remains():
             '["participant-1","participant-2"],"recommendation":"Continue.",'
             '"claims":[{"id":"claim-1","statement":"Disputed.",'
             '"supporters":["participant-1"],"dissenters":["participant-2"],'
-            '"evidence":[]}]}',
+            '"evidence":[]}],"rationale_claims":[],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
             "Two revised",
             '{"verdict":"CONTINUE","agreed":[],"dissent":'
             '["participant-1","participant-2"],"recommendation":"Continue again.",'
             '"claims":[{"id":"claim-1","statement":"Still disputed.",'
             '"supporters":["participant-1"],"dissenters":["participant-2"],'
-            '"evidence":[]}]}',
+            '"evidence":[]}],"rationale_claims":[],"alternatives":[],'
+            '"tradeoffs":[],"review_conditions":[]}',
         ],
     )
 
@@ -610,6 +636,48 @@ def test_continue_is_invalid_when_no_round_remains():
     assert result.chair is not None
     assert result.chair.verdict == "INSUFFICIENT_EVIDENCE"
     assert any(error.code == "chair_invalid" for error in result.errors)
+    assert "CONTINUE is unavailable" in claude.prompts[-1]
+
+
+def test_final_resolution_record_references_valid_claims():
+    responses = [
+        ProviderResponse("codex", "One", 1),
+        ProviderResponse("claude", "Two", 1),
+    ]
+    content = (
+        '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],'
+        '"dissent":[],"recommendation":"Ship.","claims":[{"id":"claim-1",'
+        '"statement":"The option is ready.","supporters":'
+        '["participant-1","participant-2"],"dissenters":[],"evidence":[]}],'
+        '"rationale_claims":["claim-1"],"alternatives":["Wait."],'
+        '"tradeoffs":["Faster delivery versus less observation."],'
+        '"review_conditions":["A blocker appears."]}'
+    )
+
+    parsed = _parse_chair(content, "claude", responses, resolution=True)
+
+    assert parsed is not None
+    assert parsed.rationale_claims == ["claim-1"]
+    assert parsed.alternatives == ["Wait."]
+    assert parsed.tradeoffs == ["Faster delivery versus less observation."]
+    assert parsed.review_conditions == ["A blocker appears."]
+
+
+def test_final_resolution_rejects_unknown_claim_reference():
+    responses = [
+        ProviderResponse("codex", "One", 1),
+        ProviderResponse("claude", "Two", 1),
+    ]
+    content = (
+        '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],'
+        '"dissent":[],"recommendation":"Ship.","claims":[{"id":"claim-1",'
+        '"statement":"The option is ready.","supporters":'
+        '["participant-1","participant-2"],"dissenters":[],"evidence":[]}],'
+        '"rationale_claims":["claim-9"],"alternatives":[],"tradeoffs":[],'
+        '"review_conditions":[]}'
+    )
+
+    assert _parse_chair(content, "claude", responses, resolution=True) is None
 
 
 def test_model_overrides_reject_command_metacharacters_before_status():
