@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,20 @@ def validate_annotation(annotation: str, tag: str, sha: str) -> None:
         raise ValueError("tag annotation SHA does not match")
 
 
+def validate_release_metadata(root: Path) -> None:
+    version = tomllib.loads(
+        (root / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    manifests = (
+        root / "plugins" / "roundtable" / ".codex-plugin" / "plugin.json",
+        root / "plugins" / "roundtable" / ".claude-plugin" / "plugin.json",
+    )
+    for manifest in manifests:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if payload.get("version") != version:
+            raise ValueError(f"{manifest.name} version does not match project version")
+
+
 def _git(*args: str) -> str:
     result = subprocess.run(
         ["git", *args], capture_output=True, text=True, check=False, timeout=30
@@ -37,6 +52,7 @@ def validate_release(tag: str, sha: str, root: Path) -> None:
     version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     if version != tag[1:]:
         raise ValueError("project version does not match tag")
+    validate_release_metadata(root)
     reference = f"refs/tags/{tag}"
     if _git("cat-file", "-t", reference) != "tag":
         raise ValueError("release tag must be annotated")

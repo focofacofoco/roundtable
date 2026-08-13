@@ -1,6 +1,6 @@
 {
   "name": "roundtable",
-  "version": "0.8.0",
+  "version": "0.16.0",
   "description": "Login-only multi-model advice and deliberation through official CLIs.",
   "author": {
     "name": "Facode",

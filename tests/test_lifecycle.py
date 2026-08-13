@@ -369,3 +369,14 @@ def test_release_annotation_requires_exact_marker_version_and_sha():
         validator.validate_annotation(annotation, "v0.9.0", "b" * 40)
     with pytest.raises(ValueError, match="marker"):
         validator.validate_annotation(annotation.replace("facode-owned-tag", "foreign"), "v0.9.0", sha)
+
+
+def test_release_metadata_matches_project_version():
+    root = Path(__file__).parents[1]
+    validator_path = root / "scripts" / "validate_release.py"
+    spec = importlib.util.spec_from_file_location("validate_release_metadata", validator_path)
+    assert spec is not None and spec.loader is not None
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+
+    validator.validate_release_metadata(root)

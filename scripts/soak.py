@@ -86,7 +86,7 @@ def main() -> int:
     result = asyncio.run(run_soak(args.iterations))
     report = {
         "schema_version": 1,
-        "campaign": "v0.8-release-soak",
+        "campaign": "release-soak",
         "workload": "in-process two-head advisory orchestration",
         "workspace": str(ROOT),
         "workspace_id": hashlib.sha256(str(ROOT).encode()).hexdigest()[:12],

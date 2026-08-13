@@ -1,15 +1,15 @@
 {
   "name": "roundtable",
   "owner": {
-    "name": "Frontier Infra"
+    "name": "Facode"
   },
-  "description": "Roundtable — convene a council of frontier AI models for the decisions that matter.",
+  "description": "Login-only multi-model advice and deliberation through official CLIs.",
   "plugins": [
     {
       "name": "roundtable",
       "source": "./plugins/roundtable",
-      "description": "Convene a round table of frontier AI models — Grok, Codex/OpenAI, GLM, MiniMax, Claude, and Gemini — for independent perspectives and chaired deliberation to consensus. Drives the globally-installed `roundtable` CLI.",
-      "homepage": "https://roundtable.sh",
+      "description": "Convene Codex, Claude, Grok, Gemini, and MiniMax through their official login-authenticated CLIs. Drives the globally installed `roundtable` CLI.",
+      "homepage": "https://github.com/focofacofoco/roundtable",
       "license": "MIT",
       "keywords": ["roundtable", "council", "consensus", "multi-model", "deliberation", "ai"]
     }
