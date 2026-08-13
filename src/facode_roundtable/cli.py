@@ -22,6 +22,7 @@ from facode_roundtable.config import (
     ConfigError,
     config_path,
     load_config,
+    resolve_request_defaults,
     save_config,
 )
 from facode_roundtable.executables import resolve_cli
@@ -85,7 +86,7 @@ def _parser() -> argparse.ArgumentParser:
     ask.add_argument("-q", "--question", dest="question_flag")
     ask.add_argument("-c", "--context", action="append", type=Path, default=[])
     ask.add_argument("--heads")
-    ask.add_argument("--rounds", type=int, default=1)
+    ask.add_argument("--rounds", type=int)
     ask.add_argument("--chair")
     ask.add_argument("--research", action="store_true")
     ask.add_argument("--timeout", type=float)
@@ -204,22 +205,20 @@ def main(
             if provider.model is not None and name in heads
         }
         models.update(_models(args.model))
+        rounds, timeout = resolve_request_defaults(
+            effective_config,
+            rounds=args.rounds,
+            research=args.research,
+            timeout=args.timeout,
+        )
         result = asyncio.run(
             application.ask(
                 question,
                 heads=heads,
-                rounds=args.rounds,
+                rounds=rounds,
                 chair=args.chair or effective_config.chair,
                 research=args.research,
-                timeout=(
-                    args.timeout
-                    if args.timeout is not None
-                    else (
-                        effective_config.research_timeout_seconds
-                        if args.research
-                        else effective_config.timeout_seconds
-                    )
-                ),
+                timeout=timeout,
                 models=models,
                 context=context,
             )

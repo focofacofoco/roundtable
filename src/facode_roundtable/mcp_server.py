@@ -8,7 +8,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 from facode_roundtable.catalog import capabilities_payload, unsupported_providers
-from facode_roundtable.config import Config, load_config
+from facode_roundtable.config import Config, load_config, resolve_request_defaults
 from facode_roundtable.diagnostics import build_diagnosis
 from facode_roundtable.render import render_markdown
 from facode_roundtable.service import RoundtableService
@@ -65,7 +65,7 @@ def create_server(
     async def roundtable_ask(
         question: str,
         heads: list[str] | None = None,
-        rounds: int = 1,
+        rounds: int | None = None,
         research: bool = False,
         chair: str | None = None,
         timeout: float | None = None,
@@ -94,21 +94,19 @@ def create_server(
             if provider.model is not None and name in selected
         }
         configured_models.update(models or {})
+        effective_rounds, effective_timeout = resolve_request_defaults(
+            effective,
+            rounds=rounds,
+            research=research,
+            timeout=timeout,
+        )
         result = await service.ask(
             question,
             heads=selected,
-            rounds=rounds,
+            rounds=effective_rounds,
             research=research,
             chair=chair or effective.chair,
-            timeout=(
-                timeout
-                if timeout is not None
-                else (
-                    effective.research_timeout_seconds
-                    if research
-                    else effective.timeout_seconds
-                )
-            ),
+            timeout=effective_timeout,
             models=configured_models,
         )
         payload = result.to_dict()

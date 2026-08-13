@@ -64,12 +64,19 @@ model-catalog command, so Roundtable reports that limitation without fabricating
 
 ## Configuration
 
-Roundtable defaults Codex to `gpt-5.6-sol` at `high` effort and Claude to
-`claude-opus-5` at `high` effort. These values live in the same provider configuration used
-by the CLI, MCP server, adapters, and `roundtable models` output.
+Roundtable defaults to Codex and Claude, three deliberation rounds, seven concurrent
+provider operations, a 400-second one-round timeout, and an 800-second multi-round timeout.
+Single-round research keeps its separate 600-second timeout. Codex uses `gpt-5.6-sol` at
+`high` effort; Claude uses `claude-opus-5` at `high` effort. CLI flags override these values
+for one call; persisted configuration is shared by the CLI and MCP server.
 
 ```text
 roundtable config show
+roundtable config set default_heads codex,claude
+roundtable config set default_rounds 3
+roundtable config set concurrency 7
+roundtable config set timeout_seconds 400
+roundtable config set deliberation_timeout_seconds 800
 roundtable config set providers.codex.model gpt-5.6-sol
 roundtable config set providers.codex.effort high
 roundtable config set providers.claude.model claude-opus-5

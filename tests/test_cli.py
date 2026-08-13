@@ -230,7 +230,7 @@ def test_config_set_show_and_reset_are_strict_and_atomic(tmp_path, capsys):
     assert main(["config", "set", "api_key", "forbidden"], config_file=path) == 2
     assert load_config(path).concurrency == 3
     assert main(["config", "reset"], config_file=path) == 0
-    assert load_config(path).concurrency == 5
+    assert load_config(path).concurrency == 7
 
 
 def test_output_is_ephemeral_unless_explicitly_persisted(tmp_path, monkeypatch, capsys):
@@ -533,6 +533,7 @@ def test_ask_uses_effective_config_defaults_and_cli_model_override(tmp_path, cap
     path = tmp_path / "config.json"
     config = Config(
         default_heads=["codex"],
+        default_rounds=1,
         chair="codex",
         timeout_seconds=17,
         providers={
@@ -555,10 +556,35 @@ def test_ask_uses_effective_config_defaults_and_cli_model_override(tmp_path, cap
     assert service.calls[0][1]["models"] == {"codex": "cli-model"}
 
 
+def test_ask_uses_deliberation_defaults_unless_cli_overrides_them(tmp_path, capsys):
+    path = tmp_path / "config.json"
+    save_config(Config(), path)
+    service = FakeService()
+
+    assert main(["ask", "Question"], service=service, config_file=path) == 10
+    assert main(
+        ["ask", "Question", "--rounds", "1", "--timeout", "23"],
+        service=service,
+        config_file=path,
+    ) == 10
+    capsys.readouterr()
+
+    defaults = service.calls[0][1]
+    override = service.calls[1][1]
+    assert defaults["heads"] == ["codex", "claude"]
+    assert defaults["rounds"] == 3
+    assert defaults["timeout"] == 800
+    assert override["rounds"] == 1
+    assert override["timeout"] == 23
+
+
 def test_disabled_provider_is_rejected_before_service_status(tmp_path, capsys):
     path = tmp_path / "config.json"
     save_config(
-        Config(providers={"codex": ProviderConfig(enabled=False)}),
+        Config(
+            default_heads=["claude"],
+            providers={"codex": ProviderConfig(enabled=False)},
+        ),
         path,
     )
     service = FakeService()

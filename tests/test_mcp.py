@@ -150,6 +150,7 @@ def test_mcp_uses_same_config_defaults_as_cli():
     service = FakeService()
     config = Config(
         default_heads=["codex"],
+        default_rounds=1,
         chair="codex",
         timeout_seconds=19,
         providers={"codex": ProviderConfig(model="configured-model")},
@@ -165,3 +166,24 @@ def test_mcp_uses_same_config_defaults_as_cli():
     assert service.calls[0]["chair"] == "codex"
     assert service.calls[0]["timeout"] == 19
     assert service.calls[0]["models"] == {"codex": "configured-model"}
+
+
+def test_mcp_uses_deliberation_defaults_unless_call_overrides_them():
+    service = FakeService()
+    service.adapters["claude"] = FakeStatusAdapter()
+    config = Config()
+
+    async def invoke(arguments):
+        async with Client(create_server(service=service, config=config)) as client:
+            return await client.call_tool("roundtable_ask", arguments)
+
+    asyncio.run(invoke({"question": "Question"}))
+    asyncio.run(invoke({"question": "Question", "rounds": 1, "timeout": 23}))
+
+    defaults = service.calls[0]
+    override = service.calls[1]
+    assert defaults["heads"] == ["codex", "claude"]
+    assert defaults["rounds"] == 3
+    assert defaults["timeout"] == 800
+    assert override["rounds"] == 1
+    assert override["timeout"] == 23

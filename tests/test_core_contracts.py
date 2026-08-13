@@ -25,6 +25,11 @@ def test_config_round_trips_without_credentials(tmp_path):
 def test_config_has_single_source_defaults_for_codex_and_claude():
     config = Config()
 
+    assert config.default_heads == ["codex", "claude"]
+    assert config.default_rounds == 3
+    assert config.concurrency == 7
+    assert config.timeout_seconds == 400
+    assert config.deliberation_timeout_seconds == 800
     assert config.providers["codex"].model == "gpt-5.6-sol"
     assert config.providers["codex"].effort == "high"
     assert config.providers["claude"].model == "claude-opus-5"
@@ -36,7 +41,10 @@ def test_config_has_single_source_defaults_for_codex_and_claude():
 
 
 def test_partial_provider_config_inherits_defaults_and_allows_explicit_null():
-    inherited = Config.from_dict({"providers": {"codex": {"enabled": False}}})
+    inherited = Config.from_dict({
+        "default_heads": "available",
+        "providers": {"codex": {"enabled": False}},
+    })
     inherited.providers["codex"].enabled = True
     explicit_cli_default = Config.from_dict(
         {"providers": {"codex": {"model": None, "effort": None}}}
@@ -167,6 +175,12 @@ def test_config_rejects_disabled_defaults_unsafe_models_and_unbounded_timeouts()
         Config.from_dict({"providers": {"minimax": {"model": "model&whoami"}}})
     with pytest.raises(ConfigError, match="between 1 and 3600"):
         Config.from_dict({"timeout_seconds": 999999})
+    with pytest.raises(ConfigError, match="between 1 and 3600"):
+        Config.from_dict({"deliberation_timeout_seconds": 999999})
+    with pytest.raises(ConfigError, match="default_rounds must be between 1 and 3"):
+        Config.from_dict({"default_rounds": 4})
+    with pytest.raises(ConfigError, match="concurrency must be between 1 and 7"):
+        Config.from_dict({"concurrency": 8})
 
 
 def test_run_result_has_stable_public_shape_and_exit_semantics():

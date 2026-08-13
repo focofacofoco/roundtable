@@ -13,9 +13,11 @@ PROVIDERS = PROVIDER_NAMES
 _CONFIG_FIELDS = {
     "schema_version",
     "default_heads",
+    "default_rounds",
     "chair",
     "concurrency",
     "timeout_seconds",
+    "deliberation_timeout_seconds",
     "research_timeout_seconds",
     "retention",
     "update_channel",
@@ -80,10 +82,14 @@ def _default_providers() -> dict[str, ProviderConfig]:
 @dataclass(slots=True)
 class Config:
     schema_version: int = 3
-    default_heads: str | list[str] = "available"
+    default_heads: str | list[str] = field(
+        default_factory=lambda: ["codex", "claude"]
+    )
+    default_rounds: int = 3
     chair: str = "auto"
-    concurrency: int = 5
-    timeout_seconds: int = 300
+    concurrency: int = 7
+    timeout_seconds: int = 400
+    deliberation_timeout_seconds: int = 800
     research_timeout_seconds: int = 600
     retention: str = "ephemeral"
     update_channel: str = "beta"
@@ -99,16 +105,26 @@ class Config:
         if self.chair != "auto" and self.chair not in PROVIDERS:
             raise ConfigError(f"unknown chair: {self.chair}")
         if (
+            not isinstance(self.default_rounds, int)
+            or isinstance(self.default_rounds, bool)
+            or not 1 <= self.default_rounds <= 3
+        ):
+            raise ConfigError("default_rounds must be between 1 and 3")
+        if (
             not isinstance(self.concurrency, int)
             or isinstance(self.concurrency, bool)
-            or not 1 <= self.concurrency <= len(PROVIDERS)
+            or not 1 <= self.concurrency <= 7
         ):
-            raise ConfigError("concurrency must be between 1 and 5")
+            raise ConfigError("concurrency must be between 1 and 7")
         if any(
             not isinstance(value, int)
             or isinstance(value, bool)
             or not 0 < value <= 3600
-            for value in (self.timeout_seconds, self.research_timeout_seconds)
+            for value in (
+                self.timeout_seconds,
+                self.deliberation_timeout_seconds,
+                self.research_timeout_seconds,
+            )
         ):
             raise ConfigError("timeouts must be integers between 1 and 3600")
         if self.retention != "ephemeral":
@@ -193,14 +209,33 @@ class Config:
         return {
             "schema_version": self.schema_version,
             "default_heads": self.default_heads,
+            "default_rounds": self.default_rounds,
             "chair": self.chair,
             "concurrency": self.concurrency,
             "timeout_seconds": self.timeout_seconds,
+            "deliberation_timeout_seconds": self.deliberation_timeout_seconds,
             "research_timeout_seconds": self.research_timeout_seconds,
             "retention": self.retention,
             "update_channel": self.update_channel,
             "providers": {name: config.to_dict() for name, config in self.providers.items()},
         }
+
+
+def resolve_request_defaults(
+    config: Config,
+    *,
+    rounds: int | None,
+    research: bool,
+    timeout: float | None,
+) -> tuple[int, float]:
+    effective_rounds = config.default_rounds if rounds is None else rounds
+    if timeout is not None:
+        return effective_rounds, timeout
+    if effective_rounds > 1:
+        return effective_rounds, config.deliberation_timeout_seconds
+    if research:
+        return effective_rounds, config.research_timeout_seconds
+    return effective_rounds, config.timeout_seconds
 
 
 def _validate_heads(heads: list[str]) -> None:
