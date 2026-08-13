@@ -34,6 +34,9 @@ class FakeService:
         result.finish()
         return result
 
+    async def statuses(self):
+        return [await adapter.status() for adapter in self.adapters.values()]
+
 
 async def call_tool(service, name, arguments):
     async with Client(create_server(service=service)) as client:

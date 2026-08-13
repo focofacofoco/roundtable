@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -118,7 +117,7 @@ def create_server(
     @server.tool()
     async def roundtable_providers() -> Annotated[CallToolResult, ProvidersWire]:
         """List provider eligibility without invoking a model."""
-        statuses = await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
+        statuses = await service.statuses()
         payload = {
             "schema_version": 1,
             "providers": [status.to_dict() for status in statuses],
@@ -140,7 +139,7 @@ def create_server(
             load_config(config_file)
         except Exception:
             valid = False
-        statuses = await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
+        statuses = await service.statuses()
         payload = {
             "schema_version": 1,
             "config_path": str(config_file or config_path()),

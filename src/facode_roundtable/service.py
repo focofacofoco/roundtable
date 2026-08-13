@@ -32,7 +32,37 @@ class RoundtableService:
         self.adapters = dict(adapters)
         self.concurrency = concurrency
         self.enabled = set(self.adapters) if enabled is None else set(enabled)
-        self._invocation_semaphore = asyncio.Semaphore(concurrency)
+        self._operation_semaphore: asyncio.Semaphore | None = None
+        self._operation_loop: asyncio.AbstractEventLoop | None = None
+
+    def _operation_budget(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        if self._operation_loop is loop:
+            assert self._operation_semaphore is not None
+            return self._operation_semaphore
+        if self._operation_loop is not None and not self._operation_loop.is_closed():
+            raise RuntimeError("service cannot span active event loops")
+        self._operation_loop = loop
+        self._operation_semaphore = asyncio.Semaphore(self.concurrency)
+        return self._operation_semaphore
+
+    async def statuses(self, *, timeout: float = 20) -> list[ProviderStatus]:
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be finite and positive")
+        deadline = asyncio.get_running_loop().time() + timeout
+        semaphore = self._operation_budget()
+        snapshots = await asyncio.gather(
+            *(
+                self._safe_status(name, deadline=deadline, semaphore=semaphore)
+                for name in self.adapters
+            )
+        )
+        return [
+            status
+            if status is not None
+            else ProviderStatus(name, False, False, reason=error.code)
+            for name, status, error in snapshots
+        ]
 
     async def ask(
         self,
@@ -74,8 +104,13 @@ class RoundtableService:
         base_prompt = _build_prompt(question, context or [])
         mode = "deliberation" if rounds > 1 else ("research" if research else "advisory")
         result = RunResult.create(question, heads, mode)
+        deadline = asyncio.get_running_loop().time() + timeout
+        semaphore = self._operation_budget()
         statuses = await asyncio.gather(
-            *(self._safe_status(name, timeout=min(timeout, 20)) for name in heads)
+            *(
+                self._safe_status(name, deadline=deadline, semaphore=semaphore)
+                for name in heads
+            )
         )
         eligible: list[str] = []
         for name, status, error in statuses:
@@ -95,14 +130,13 @@ class RoundtableService:
             else:
                 eligible.append(name)
         result.eligible_heads = eligible
-        semaphore = self._invocation_semaphore
         round_prompt = base_prompt
         for round_number in range(1, rounds + 1):
             round_responses = await self._run_round(
                 eligible,
                 round_prompt,
                 round_number=round_number,
-                timeout=timeout,
+                deadline=deadline,
                 models=selected_models,
                 research=research and round_number == 1,
                 semaphore=semaphore,
@@ -141,7 +175,7 @@ class RoundtableService:
             chair_invocation, chair_error = await self._invoke_one(
                 chair_name,
                 _chair_prompt(question, round_number, round_responses),
-                timeout=timeout,
+                deadline=deadline,
                 model=selected_models.get(chair_name),
                 research=False,
                 semaphore=semaphore,
@@ -192,7 +226,7 @@ class RoundtableService:
         prompt: str,
         *,
         round_number: int,
-        timeout: float,
+        deadline: float,
         models: Mapping[str, str],
         research: bool,
         semaphore: asyncio.Semaphore,
@@ -203,7 +237,7 @@ class RoundtableService:
                 self._safe_invoke(
                     name,
                     prompt,
-                    timeout=timeout,
+                    deadline=deadline,
                     model=models.get(name),
                     research=research,
                     semaphore=semaphore,
@@ -238,10 +272,12 @@ class RoundtableService:
         return responses
 
     async def _safe_status(
-        self, name: str, *, timeout: float
+        self, name: str, *, deadline: float, semaphore: asyncio.Semaphore
     ) -> tuple[str, ProviderStatus | None, ResultError | None]:
         try:
-            status = await asyncio.wait_for(self.adapters[name].status(), timeout=timeout)
+            async with asyncio.timeout(min(20, _remaining(deadline))):
+                async with semaphore:
+                    status = await self.adapters[name].status()
             return name, status, None
         except TimeoutError:
             return name, None, ResultError(name, "timeout", "provider status timed out")
@@ -253,7 +289,7 @@ class RoundtableService:
         name: str,
         prompt: str,
         *,
-        timeout: float,
+        deadline: float,
         model: str | None,
         research: bool,
         semaphore: asyncio.Semaphore,
@@ -262,7 +298,7 @@ class RoundtableService:
         invocation, error = await self._invoke_one(
             name,
             prompt,
-            timeout=timeout,
+            deadline=deadline,
             model=model,
             research=research,
             semaphore=semaphore,
@@ -275,20 +311,21 @@ class RoundtableService:
         name: str,
         prompt: str,
         *,
-        timeout: float,
+        deadline: float,
         model: str | None,
         research: bool,
         semaphore: asyncio.Semaphore,
         round_number: int,
     ) -> tuple[InvocationResult | None, ResultError | None]:
         try:
-            async with semaphore:
-                invocation = await asyncio.wait_for(
-                    self.adapters[name].invoke(
-                        prompt, timeout=timeout, model=model, research=research
-                    ),
-                    timeout=timeout,
-                )
+            async with asyncio.timeout(_remaining(deadline)):
+                async with semaphore:
+                    invocation = await self.adapters[name].invoke(
+                        prompt,
+                        timeout=_remaining(deadline),
+                        model=model,
+                        research=research,
+                    )
             return invocation, None
         except TimeoutError:
             return None, ResultError(
@@ -302,6 +339,13 @@ class RoundtableService:
             return None, ResultError(
                 name, "provider_failed", "provider failed", round=round_number
             )
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        raise TimeoutError
+    return remaining
 
 
 def _build_prompt(question: str, context: list[str]) -> str:

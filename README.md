@@ -5,9 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-gh release download v0.10.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
-gh release verify-asset v0.10.0 roundtable-dist/facode_roundtable-0.10.0-py3-none-any.whl --repo focofacofoco/roundtable
-uv tool install roundtable-dist/facode_roundtable-0.10.0-py3-none-any.whl
+gh release download v0.11.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.11.0 roundtable-dist/facode_roundtable-0.11.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.11.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -47,6 +47,9 @@ roundtable ask -q "..." --research
 ```
 
 Research is fail-closed. A provider participates only when Roundtable can constrain it to web tools while denying local file, command and MCP tools.
+
+Each operation has one total deadline covering status probes, queue time, rounds, and chair
+work. The configured concurrency limit is shared by status and inference operations.
 
 OAuth/browser consent remains inside the official provider CLI. Roundtable never receives or stores the resulting credentials. A provider stays ineligible until `roundtable providers` can prove the supported first-party login method.
 

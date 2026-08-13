@@ -3,7 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from facode_roundtable.harness import HarnessManager
+import facode_roundtable.harness as harness_module
+from facode_roundtable.harness import HarnessManager, _run_command
+from facode_roundtable.runner import CommandRunner
 
 
 class FakeCommands:
@@ -15,18 +17,26 @@ class FakeCommands:
         self.calls.append(argv)
         provider = argv[0]
         command = argv[2]
-        if command in {"get", "list"}:
+        if command == "get":
             output = (
-                "roundtable: roundtable mcp serve - connected\n"
-                if provider == "claude"
+                "roundtable:\n  Scope: User config\n  Status: Connected\n"
+                if provider == "claude" and provider in self.configured
                 else "command: roundtable\nargs: mcp serve\n"
+            )
+            missing = (
+                'No MCP server named "roundtable". Configured servers: existing'
+                if provider == "claude"
+                else "Error: No MCP server named 'roundtable' found."
             )
             return subprocess.CompletedProcess(
                 argv,
                 0 if provider in self.configured else 1,
-                output,
-                "",
+                output if provider in self.configured else "",
+                "" if provider in self.configured else missing,
             )
+        if command == "list":
+            output = "roundtable: roundtable mcp serve - connected\n"
+            return subprocess.CompletedProcess(argv, 0, output, "")
         if command == "add":
             self.configured.add(provider)
             return subprocess.CompletedProcess(argv, 0, "", "")
@@ -110,6 +120,10 @@ def test_harness_rejects_extra_mcp_arguments_that_share_expected_prefix(tmp_path
             return subprocess.CompletedProcess(
                 argv, 0, "command: roundtable\nargs: mcp serve --foreign\n", ""
             )
+        if argv[:4] == ["claude", "mcp", "get", "roundtable"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "roundtable:\n  Scope: User config\n", ""
+            )
         if argv[:3] == ["claude", "mcp", "list"]:
             return subprocess.CompletedProcess(
                 argv, 0, "roundtable: roundtable mcp serve --foreign - connected\n", ""
@@ -135,6 +149,10 @@ def test_harness_never_removes_foreign_claude_mcp_or_similarly_named_skill(tmp_p
     commands.configured.add("claude")
 
     def foreign_command(argv):
+        if argv[:4] == ["claude", "mcp", "get", "roundtable"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "roundtable:\n  Scope: User config\n", ""
+            )
         if argv[:3] == ["claude", "mcp", "list"]:
             return subprocess.CompletedProcess(
                 argv, 0, "roundtable: foreign-command - connected\n", ""
@@ -173,3 +191,56 @@ def test_packaged_skill_is_login_only_and_uses_current_cli_contract():
         assert forbidden not in content
     assert "roundtable ask" in content
     assert "official CLI login" in content
+
+
+def test_harness_status_failure_is_not_mistaken_for_absence_or_installed(tmp_path):
+    calls = []
+
+    def failing(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 70, "", "output_limit")
+
+    manager = HarnessManager(
+        home=tmp_path,
+        command_runner=failing,
+        skill_text=skill_source().read_text(encoding="utf-8"),
+    )
+
+    report = manager.install()
+
+    assert report["ok"] is False
+    assert report["components"]["codex_mcp"]["reason"] == "status_failed"
+    assert report["components"]["claude_mcp"]["reason"] == "status_failed"
+    assert not [call for call in calls if call[2] == "add"]
+
+
+def test_harness_requires_exact_provider_specific_absence_message(tmp_path):
+    calls = []
+
+    def ambiguous(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            "",
+            "transient failure: no MCP server named roundtable while reading state",
+        )
+
+    report = HarnessManager(
+        home=tmp_path,
+        command_runner=ambiguous,
+        skill_text=skill_source().read_text(encoding="utf-8"),
+    ).install()
+
+    assert report["ok"] is False
+    assert report["components"]["codex_mcp"]["reason"] == "status_failed"
+    assert report["components"]["claude_mcp"]["reason"] == "status_failed"
+    assert not [call for call in calls if call[2] == "add"]
+
+
+def test_harness_default_runner_is_bounded_and_sanitized():
+    names = set(_run_command.__code__.co_names)
+
+    assert harness_module.CommandRunner is CommandRunner
+    assert "CommandRunner" in names
+    assert "run" in names

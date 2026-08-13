@@ -280,6 +280,8 @@ def _tool_lifecycle(action: str) -> int:
         print("roundtable: uv is not available", file=sys.stderr)
         return 3
 async def _statuses(service: RoundtableService):
+    if hasattr(service, "statuses"):
+        return await service.statuses()
     return await asyncio.gather(*(adapter.status() for adapter in service.adapters.values()))
 
 
@@ -291,14 +293,7 @@ def _doctor(
         config_valid = True
     except ConfigError:
         config_valid = False
-    statuses = asyncio.run(_statuses(service))
-    live_results: dict[str, str] = {}
-    if live:
-        for status in statuses:
-            if not status.eligible:
-                continue
-            result = asyncio.run(service.ask("Reply with exactly: OK", heads=[status.name], timeout=60))
-            live_results[status.name] = "ok" if result.successful_heads else "failed"
+    statuses, live_results = asyncio.run(_doctor_checks(service, live=live))
     payload = {
         "schema_version": 1,
         "config_path": str(path or config_path()),
@@ -316,6 +311,22 @@ def _doctor(
             suffix = f", live={live_results[status.name]}" if status.name in live_results else ""
             print(f"{status.name:8} {state}{suffix}")
     return 0 if config_valid else 2
+
+
+async def _doctor_checks(
+    service: RoundtableService, *, live: bool
+) -> tuple[list, dict[str, str]]:
+    statuses = await _statuses(service)
+    live_results: dict[str, str] = {}
+    if live:
+        for status in statuses:
+            if not status.eligible:
+                continue
+            result = await service.ask(
+                "Reply with exactly: OK", heads=[status.name], timeout=60
+            )
+            live_results[status.name] = "ok" if result.successful_heads else "failed"
+    return statuses, live_results
 
 
 def _auth(service: RoundtableService, command: str, provider: str | None) -> int:

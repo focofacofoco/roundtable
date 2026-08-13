@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import importlib.resources
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
 from facode_roundtable.executables import resolve_cli
-from facode_roundtable.runner import sanitize_environment
+from facode_roundtable.runner import CommandRunner
 
 
-CommandRunner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+HarnessCommand = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 _MCP_COMMANDS = {
     "codex": {
@@ -20,7 +22,8 @@ _MCP_COMMANDS = {
         "remove": ["codex", "mcp", "remove", "roundtable"],
     },
     "claude": {
-        "get": ["claude", "mcp", "list"],
+        "get": ["claude", "mcp", "get", "roundtable"],
+        "list": ["claude", "mcp", "list"],
         "add": [
             "claude",
             "mcp",
@@ -45,7 +48,7 @@ class HarnessManager:
         self,
         *,
         home: Path | None = None,
-        command_runner: CommandRunner | None = None,
+        command_runner: HarnessCommand | None = None,
         skill_text: str | None = None,
     ):
         self.home = home or Path.home()
@@ -69,7 +72,7 @@ class HarnessManager:
         components: dict[str, dict[str, Any]] = {}
         for provider in _MCP_COMMANDS:
             state = self._mcp_status(provider)
-            if not state["configured"] and state.get("reason") != "conflict":
+            if state.get("reason") == "not_configured":
                 added = self.command_runner(_MCP_COMMANDS[provider]["add"])
                 state = self._mcp_status(provider) if added.returncode == 0 else {
                     "configured": False,
@@ -121,7 +124,12 @@ class HarnessManager:
     def _mcp_status(self, provider: str) -> dict[str, Any]:
         result = self.command_runner(_MCP_COMMANDS[provider]["get"])
         if result.returncode != 0:
-            return {"configured": False, "reason": "not_configured"}
+            reason = (
+                "not_configured"
+                if _is_missing_mcp(provider, result.stdout, result.stderr)
+                else "status_failed"
+            )
+            return {"configured": False, "reason": reason}
         if provider == "codex":
             normalized = result.stdout.lower().replace("\r", "")
             fields = {
@@ -133,7 +141,10 @@ class HarnessManager:
             if fields.get("command") != "roundtable" or fields.get("args") != "mcp serve":
                 return {"configured": False, "reason": "conflict"}
         else:
-            normalized = result.stdout.lower().replace("\r", "")
+            listing = self.command_runner(_MCP_COMMANDS[provider]["list"])
+            if listing.returncode != 0:
+                return {"configured": False, "reason": "status_failed"}
+            normalized = listing.stdout.lower().replace("\r", "")
             matching = [
                 line
                 for line in normalized.splitlines()
@@ -175,7 +186,9 @@ def _report(
     ok = all(
         item.get("configured") is expect_configured
         and (not expect_configured or item.get("current", True))
-        and item.get("reason") not in {"conflict", "install_failed", "remove_failed"}
+        and item.get("reason") not in {
+            "conflict", "install_failed", "remove_failed", "status_failed"
+        }
         for item in components.values()
     )
     return {"action": action, "ok": ok, "components": components}
@@ -208,6 +221,16 @@ def _is_roundtable_skill(content: str) -> bool:
     return content == legacy
 
 
+def _is_missing_mcp(provider: str, stdout: str, stderr: str) -> bool:
+    output = f"{stdout}\n{stderr}".strip()
+    if provider == "codex":
+        return output == "Error: No MCP server named 'roundtable' found."
+    return re.fullmatch(
+        r'No MCP server named "roundtable"\. Configured servers:(?: [^\r\n]+)?',
+        output,
+    ) is not None
+
+
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -220,16 +243,16 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def _run_command(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    environment = sanitize_environment(os.environ)
     command = [resolve_cli(argv[0]), *argv[1:]]
     try:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            env=environment,
+        result = asyncio.run(
+            CommandRunner(max_output_bytes=1024 * 1024).run(command, timeout=30)
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         return subprocess.CompletedProcess(command, 127, "", type(exc).__name__)
+    return subprocess.CompletedProcess(
+        command,
+        result.returncode if result.returncode is not None else 124,
+        result.stdout,
+        result.stderr,
+    )

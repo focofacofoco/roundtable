@@ -456,3 +456,117 @@ def test_concurrency_limit_is_shared_across_parallel_requests():
         return maximum
 
     assert asyncio.run(scenario()) == 1
+
+
+def test_total_deadline_includes_status_and_invocation():
+    class SlowAdapter(FakeAdapter):
+        async def status(self):
+            await asyncio.sleep(0.03)
+            return await super().status()
+
+        async def invoke(self, prompt, *, timeout, model=None, research=False):
+            await asyncio.sleep(0.03)
+            return InvocationResult("too late")
+
+    started = time.perf_counter()
+    result = asyncio.run(
+        RoundtableService({"codex": SlowAdapter("codex")}).ask(
+            "Question", heads=["codex"], timeout=0.05
+        )
+    )
+
+    assert time.perf_counter() - started < 0.2
+    assert result.responses == []
+    assert result.errors[-1].code == "timeout"
+
+
+def test_total_deadline_includes_chair_and_later_rounds():
+    class SlowDeliberator(FakeAdapter):
+        async def invoke(self, prompt, *, timeout, model=None, research=False):
+            await asyncio.sleep(0.03)
+            if "neutral chair" in prompt:
+                return InvocationResult(
+                    '{"verdict":"CONTINUE","agreed":[],"dissent":["codex","claude"],'
+                    '"recommendation":"Continue."}'
+                )
+            return InvocationResult(f"{self.name} answer")
+
+    started = time.perf_counter()
+    result = asyncio.run(
+        RoundtableService(
+            {
+                "codex": SlowDeliberator("codex"),
+                "claude": SlowDeliberator("claude"),
+            }
+        ).ask("Question", heads=["codex", "claude"], rounds=3, timeout=0.05)
+    )
+
+    assert time.perf_counter() - started < 0.2
+    assert [response.round for response in result.responses] == [1, 1]
+    assert result.chair is not None
+    assert result.chair.verdict == "INSUFFICIENT_EVIDENCE"
+    assert any(error.code == "chair_failed" for error in result.errors)
+
+
+def test_concurrency_budget_includes_status_across_parallel_requests():
+    async def scenario():
+        active = 0
+        maximum = 0
+
+        class CountingStatusAdapter(FakeAdapter):
+            async def status(self):
+                nonlocal active, maximum
+                active += 1
+                maximum = max(maximum, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+                return await super().status()
+
+        service = RoundtableService(
+            {"codex": CountingStatusAdapter("codex")}, concurrency=1
+        )
+        await asyncio.gather(
+            service.ask("First", heads=["codex"]),
+            service.ask("Second", heads=["codex"]),
+        )
+        return maximum
+
+    assert asyncio.run(scenario()) == 1
+
+
+def test_status_snapshot_uses_typed_failure_isolation_and_shared_budget():
+    class BrokenAdapter(FakeAdapter):
+        async def status(self):
+            raise RuntimeError("boom")
+
+    statuses = asyncio.run(
+        RoundtableService(
+            {"codex": FakeAdapter("codex"), "claude": BrokenAdapter("claude")},
+            concurrency=1,
+        ).statuses(timeout=1)
+    )
+
+    assert statuses[0].eligible is True
+    assert statuses[1].eligible is False
+    assert statuses[1].reason == "status_failed"
+
+
+def test_service_can_be_reused_across_sequential_event_loops_under_contention():
+    class SlowStatusAdapter(FakeAdapter):
+        async def status(self):
+            await asyncio.sleep(0.01)
+            return await super().status()
+
+    service = RoundtableService(
+        {
+            "codex": SlowStatusAdapter("codex"),
+            "claude": SlowStatusAdapter("claude"),
+        },
+        concurrency=1,
+    )
+
+    first = asyncio.run(service.statuses(timeout=1))
+    second = asyncio.run(service.statuses(timeout=1))
+
+    assert [status.eligible for status in first] == [True, True]
+    assert [status.eligible for status in second] == [True, True]
