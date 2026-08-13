@@ -184,6 +184,20 @@ class ReleaseUpdater:
             raise LifecycleError("lifecycle command failed") from exc
 
 
+def _windows_tool_identity() -> tuple[Path, Path] | None:
+    tool_python = Path(sys.executable).resolve()
+    if (
+        not tool_python.is_file()
+        or tool_python.parent.name.casefold() != "scripts"
+        or tool_python.parent.parent.name.casefold() != "facode-roundtable"
+    ):
+        return None
+    launcher = Path(resolve_cli("roundtable")).resolve()
+    if not launcher.is_file() or launcher.name.casefold() != "roundtable.exe":
+        return None
+    return tool_python, launcher
+
+
 def schedule_windows_update(uv: str, wheel: Path, staging: Path) -> int:
     powershell = resolve_cli("pwsh")
     if not Path(powershell).is_file():
@@ -191,6 +205,8 @@ def schedule_windows_update(uv: str, wheel: Path, staging: Path) -> int:
     if not Path(powershell).is_file():
         raise LifecycleError("PowerShell is required to update on Windows")
     helper = Path(__file__).with_name("update.ps1")
+    identity = _windows_tool_identity()
+    tool_python, launcher = identity or ("", "")
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
         subprocess, "CREATE_NO_WINDOW", 0
     )
@@ -200,6 +216,8 @@ def schedule_windows_update(uv: str, wheel: Path, staging: Path) -> int:
                 powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                 "-File", str(helper), "-ParentProcessId", str(os.getpid()),
                 "-UvPath", uv, "-WheelPath", str(wheel), "-StagingPath", str(staging),
+                "-ToolPythonPath", str(tool_python),
+                "-RoundtableLauncherPath", str(launcher),
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

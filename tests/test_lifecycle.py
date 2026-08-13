@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import time
+import venv
 
 import pytest
 
@@ -184,6 +188,149 @@ def test_windows_update_helper_cleans_only_the_supplied_staging_directory():
 
     assert "Remove-Item -LiteralPath $StagingPath -Recurse -Force" in helper
     assert "Resolve-Path -LiteralPath $StagingPath" in helper
+    assert "Resolve-Path -LiteralPath $ToolPythonPath" in helper
+    assert "Resolve-Path -LiteralPath $RoundtableLauncherPath" in helper
+    assert "[regex]::Escape($resolvedToolPython)" in helper
+    assert "$process.CommandLine -match $commandPattern" in helper
+    assert "taskkill.exe" in helper
+    assert all(value in helper for value in ("/PID", "/T", "/F"))
+    assert "Stop-Process -Name python" not in helper
+
+
+def test_windows_update_helper_receives_exact_uv_tool_identity(monkeypatch, tmp_path):
+    module = lifecycle()
+    pwsh = tmp_path / "pwsh.exe"
+    uv = tmp_path / "uv.exe"
+    wheel = tmp_path / "roundtable.whl"
+    tool_python = tmp_path / "tool" / "Scripts" / "python.exe"
+    launcher = tmp_path / "bin" / "roundtable.exe"
+    for path in (pwsh, uv, wheel, tool_python, launcher):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    captured = {}
+
+    monkeypatch.setattr(module, "resolve_cli", lambda _name: str(pwsh))
+
+    def popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        module, "_windows_tool_identity", lambda: (tool_python, launcher)
+    )
+
+    assert module.schedule_windows_update(uv, wheel, tmp_path) == 0
+    argv = captured["argv"]
+    assert argv[argv.index("-ToolPythonPath") + 1] == str(tool_python)
+    assert argv[argv.index("-RoundtableLauncherPath") + 1] == str(launcher)
+
+
+def test_windows_tool_identity_rejects_shared_interpreter(monkeypatch, tmp_path):
+    module = lifecycle()
+    launcher = tmp_path / "bin" / "roundtable.exe"
+    launcher.parent.mkdir()
+    launcher.touch()
+    shared_python = tmp_path / "shared" / "python.exe"
+    shared_python.parent.mkdir()
+    shared_python.touch()
+    monkeypatch.setattr(module.sys, "executable", str(shared_python))
+    monkeypatch.setattr(module, "resolve_cli", lambda _name: str(launcher))
+
+    assert module._windows_tool_identity() is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree behavior")
+def test_windows_update_helper_stops_exact_roundtable_process_tree(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    tool_root = tmp_path / "facode-roundtable"
+    venv.EnvBuilder(with_pip=False).create(tool_root)
+    tool_python = tool_root / "Scripts" / "python.exe"
+    launcher = tmp_path / "bin" / "roundtable.exe"
+    launcher.parent.mkdir()
+    pid_file = tmp_path / "child.pid"
+    launcher.write_text(
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(sys.argv[1], 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    unrelated = subprocess.Popen(
+        [tool_python, "-c", "import time; time.sleep(60)"]
+    )
+    process = subprocess.Popen([tool_python, launcher, pid_file])
+    try:
+        deadline = time.monotonic() + 10
+        child_pid_text = ""
+        while not child_pid_text and time.monotonic() < deadline:
+            if pid_file.exists():
+                child_pid_text = pid_file.read_text(encoding="utf-8").strip()
+            time.sleep(0.05)
+        child_pid = int(child_pid_text)
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        wheel = staging / "roundtable.whl"
+        wheel.touch()
+        uv = tmp_path / "uv.cmd"
+        uv.write_text("@exit /b 0\n", encoding="utf-8")
+        helper = Path(__file__).parents[1] / "src" / "facode_roundtable" / "update.ps1"
+        observed = subprocess.run(
+            [
+                pwsh, "-NoProfile", "-NonInteractive", "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={process.pid}').CommandLine",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+
+        result = subprocess.run(
+            [
+                pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-File", helper, "-ParentProcessId", "2147483647", "-UvPath", uv,
+                "-WheelPath", wheel, "-StagingPath", staging,
+                "-ToolPythonPath", tool_python,
+                "-RoundtableLauncherPath", launcher,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        try:
+            returncode = process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"roundtable process survived: {observed}\n{result.stdout}")
+        assert returncode != 0
+        assert unrelated.poll() is None
+        child_check = subprocess.run(
+            [
+                pwsh, "-NoProfile", "-NonInteractive", "-Command",
+                f"if (Get-Process -Id {child_pid} -ErrorAction SilentlyContinue) {{ exit 1 }}",
+            ],
+            timeout=10,
+            check=False,
+        )
+        assert child_check.returncode == 0
+    finally:
+        if process.poll() is None:
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+            )
+        if unrelated.poll() is None:
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(unrelated.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+            )
 
 
 def test_release_workflow_is_tag_only_and_validates_owner_annotation():
