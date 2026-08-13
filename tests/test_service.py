@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from facode_roundtable.models import ExitCode
+from facode_roundtable.models import Citation, ExitCode, ProviderResponse
 from facode_roundtable.providers.base import InvocationResult, ProviderError, ProviderStatus
 from facode_roundtable.service import RoundtableService, _parse_chair
 
@@ -204,10 +204,10 @@ def test_deliberation_keeps_round_one_blind_then_stops_on_chair_consensus():
         [
             "Claude R1",
             '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
-            '"recommendation":"Reconsider."}',
+            '"recommendation":"Reconsider.","claims":[]}',
             "Claude R2",
             '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
-            '"recommendation":"Ship option A."}',
+            '"recommendation":"Ship option A.","claims":[]}',
         ],
     )
     service = RoundtableService({"codex": codex, "claude": claude})
@@ -236,10 +236,10 @@ def test_later_rounds_hide_provider_identity_and_remap_valid_aliases():
         [
             "Position two",
             '{"verdict":"CONTINUE","agreed":[],"dissent":'
-            '["participant-1","participant-2"],"recommendation":"Reconsider."}',
+            '["participant-1","participant-2"],"recommendation":"Reconsider.","claims":[]}',
             "Revised two",
             '{"verdict":"CONSENSUS","agreed":'
-            '["participant-1","participant-2"],"dissent":[],"recommendation":"Ship."}',
+            '["participant-1","participant-2"],"dissent":[],"recommendation":"Ship.","claims":[]}',
         ],
     )
 
@@ -268,7 +268,7 @@ def test_chair_rejects_unknown_opaque_participant():
         [
             "Two",
             '{"verdict":"CONSENSUS","agreed":'
-            '["participant-1","participant-9"],"dissent":[],"recommendation":"Ship."}',
+            '["participant-1","participant-9"],"dissent":[],"recommendation":"Ship.","claims":[]}',
         ],
     )
 
@@ -290,7 +290,7 @@ def test_auto_chair_priority_is_stable_not_mapping_or_head_order():
         [
             "A",
             '{"verdict":"CONSENSUS","agreed":["participant-2","participant-1"],'
-            '"dissent":[],"recommendation":"Done."}',
+            '"dissent":[],"recommendation":"Done.","claims":[]}',
         ],
     )
 
@@ -431,10 +431,10 @@ def test_research_tools_are_disabled_after_the_independent_first_round():
         [
             "A1",
             '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
-            '"recommendation":"Continue."}',
+            '"recommendation":"Continue.","claims":[]}',
             "A2",
             '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
-            '"recommendation":"Done."}',
+            '"recommendation":"Done.","claims":[]}',
         ],
     )
 
@@ -451,10 +451,67 @@ def test_research_tools_are_disabled_after_the_independent_first_round():
 def test_consensus_must_include_every_current_participant():
     content = (
         '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
-        '"recommendation":"Ship."}'
+        '"recommendation":"Ship.","claims":[]}'
     )
 
-    assert _parse_chair(content, "claude", ["codex", "claude", "grok"]) is None
+    responses = [ProviderResponse(name, name, 1) for name in ["codex", "claude", "grok"]]
+    assert _parse_chair(content, "claude", responses) is None
+
+
+def test_chair_builds_claim_ledger_with_validated_provider_reported_evidence():
+    responses = [
+        ProviderResponse(
+            "codex",
+            "Support https://example.com/support",
+            1,
+            citations=[Citation("https://example.com/support")],
+        ),
+        ProviderResponse(
+            "claude",
+            "Challenge https://example.com/challenge",
+            1,
+            citations=[Citation("https://example.com/challenge")],
+        ),
+    ]
+    content = (
+        '{"verdict":"SPLIT","agreed":["participant-1"],'
+        '"dissent":["participant-2"],"recommendation":"Investigate.",'
+        '"claims":[{"id":"claim-1","statement":"Option A is ready.",'
+        '"supporters":["participant-1"],"dissenters":["participant-2"],'
+        '"evidence":[{"url":"https://example.com/support",'
+        '"providers":["participant-1"],"relation":"supports"},'
+        '{"url":"https://example.com/challenge",'
+        '"providers":["participant-2"],"relation":"contradicts"}]}]}'
+    )
+
+    parsed = _parse_chair(content, "claude", responses)
+
+    assert parsed is not None
+    claim = parsed.claims[0]
+    assert claim.id == "claim-1"
+    assert claim.statement == "Option A is ready."
+    assert claim.supporters == ["codex"]
+    assert claim.dissenters == ["claude"]
+    assert claim.status == "disputed"
+    assert claim.evidence[0].providers == ["codex"]
+    assert claim.evidence[1].relation == "contradicts"
+
+
+def test_chair_rejects_evidence_not_reported_by_the_named_provider():
+    responses = [
+        ProviderResponse("codex", "One", 1),
+        ProviderResponse("claude", "Two", 1),
+    ]
+    content = (
+        '{"verdict":"SPLIT","agreed":["participant-1"],'
+        '"dissent":["participant-2"],"recommendation":"Investigate.",'
+        '"claims":[{"id":"claim-1","statement":"Option A is ready.",'
+        '"supporters":["participant-1"],"dissenters":["participant-2"],'
+        '"evidence":[{"url":"https://invented.example/evidence",'
+        '"providers":["participant-1"],"relation":"supports"}]}]}'
+    )
+
+    assert _parse_chair(content, "claude", responses) is None
 
 
 def test_model_overrides_reject_command_metacharacters_before_status():
@@ -541,7 +598,7 @@ def test_total_deadline_includes_chair_and_later_rounds():
             if "neutral chair" in prompt:
                 return InvocationResult(
                     '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
-                    '"recommendation":"Continue."}'
+                    '"recommendation":"Continue.","claims":[]}'
                 )
             return InvocationResult(f"{self.name} answer")
 

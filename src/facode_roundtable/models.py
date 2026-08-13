@@ -49,12 +49,30 @@ class ProviderError:
 
 
 @dataclass(slots=True)
+class EvidenceLink:
+    url: str
+    providers: list[str]
+    relation: str
+
+
+@dataclass(slots=True)
+class ClaimRecord:
+    id: str
+    statement: str
+    supporters: list[str]
+    dissenters: list[str]
+    status: str
+    evidence: list[EvidenceLink] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ChairResult:
     chair: str
     verdict: str
     agreed: list[str] = field(default_factory=list)
     dissent: list[str] = field(default_factory=list)
     recommendation: str = ""
+    claims: list[ClaimRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -77,7 +95,7 @@ class RunResult:
     @classmethod
     def create(cls, question: str, requested_heads: list[str], mode: str = "advisory") -> "RunResult":
         return cls(
-            schema_version=1,
+            schema_version=2,
             run_id=str(uuid.uuid4()),
             mode=mode,
             question_hash=hashlib.sha256(question.encode("utf-8")).hexdigest(),

@@ -44,3 +44,44 @@ def test_published_json_schema_is_itself_valid():
     Draft202012Validator.check_schema(
         json.loads(schema_path.read_text(encoding="utf-8"))
     )
+
+
+def test_archived_v1_schema_remains_valid():
+    schema_path = Path(__file__).parents[1] / "docs" / "run-result-v1.schema.json"
+    Draft202012Validator.check_schema(
+        json.loads(schema_path.read_text(encoding="utf-8"))
+    )
+
+
+def test_claim_ledger_matches_published_json_schema():
+    class LedgerAdapter(SchemaAdapter):
+        async def invoke(self, prompt, *, timeout, model=None, research=False):
+            if "neutral chair" in prompt:
+                return InvocationResult(
+                    '{"verdict":"CONSENSUS","agreed":'
+                    '["participant-1","participant-2"],"dissent":[],'
+                    '"recommendation":"Ship.","claims":[{"id":"claim-1",'
+                    '"statement":"The option is ready.","supporters":'
+                    '["participant-1","participant-2"],"dissenters":[],'
+                    '"evidence":[]}]}'
+                )
+            return InvocationResult("Answer", model=model, duration_ms=1)
+
+    codex = LedgerAdapter()
+    claude = LedgerAdapter()
+    claude.name = "claude"
+    result = asyncio.run(
+        RoundtableService({"codex": codex, "claude": claude}).ask(
+            "Question", heads=["codex", "claude"], rounds=2
+        )
+    )
+    schema = json.loads(
+        (Path(__file__).parents[1] / "docs" / "run-result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    Draft202012Validator(schema, format_checker=FormatChecker()).validate(
+        result.to_dict()
+    )
+    assert result.schema_version == 2

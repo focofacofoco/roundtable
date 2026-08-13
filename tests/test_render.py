@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 
-from facode_roundtable.models import ProviderResponse, RunResult
+from facode_roundtable.models import (
+    ChairResult,
+    ClaimRecord,
+    EvidenceLink,
+    ProviderResponse,
+    RunResult,
+)
 from facode_roundtable.render import render_json, render_markdown
 
 
@@ -34,3 +40,31 @@ def test_markdown_render_strips_terminal_control_sequences():
     assert "\x1b" not in markdown
     assert "\x00" not in markdown
     assert "payload" not in markdown
+
+
+def test_markdown_renders_claim_ledger_from_chair_result():
+    result = RunResult.create("Question", ["codex", "claude"], "deliberation")
+    result.chair = ChairResult(
+        "claude",
+        "SPLIT",
+        agreed=["codex"],
+        dissent=["claude"],
+        recommendation="Investigate.",
+        claims=[
+            ClaimRecord(
+                "claim-1",
+                "Option A is ready.",
+                ["codex"],
+                ["claude"],
+                "disputed",
+                [EvidenceLink("https://example.com/source", ["codex"], "supports")],
+            )
+        ],
+    )
+
+    markdown = render_markdown(result)
+
+    assert "### Claim claim-1 — disputed" in markdown
+    assert "Option A is ready." in markdown
+    assert "https://example.com/source" in markdown
+    assert "supports — codex" in markdown

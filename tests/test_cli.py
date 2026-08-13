@@ -76,7 +76,7 @@ def output_schema(name):
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.13.0\n"
+    assert capsys.readouterr().out == "roundtable 0.14.0\n"
 
 
 def test_lightweight_cli_import_does_not_load_mcp_sdk():

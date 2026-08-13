@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/focofacofoco/roundtable/blob/main/docs/run-result.schema.json",
-  "title": "Roundtable RunResult",
+  "$id": "https://github.com/focofacofoco/roundtable/blob/main/docs/run-result-v1.schema.json",
+  "title": "Roundtable RunResult v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -21,7 +21,7 @@
     "finished_at"
   ],
   "properties": {
-    "schema_version": {"const": 2},
+    "schema_version": {"const": 1},
     "run_id": {"type": "string", "format": "uuid"},
     "mode": {"enum": ["advisory", "research", "deliberation"]},
     "question_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -102,40 +102,16 @@
         "round": {"type": ["integer", "null"], "minimum": 1, "maximum": 3}
       }
     },
-    "evidenceLink": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["url", "providers", "relation"],
-      "properties": {
-        "url": {"type": "string", "format": "uri"},
-        "providers": {"$ref": "#/$defs/heads"},
-        "relation": {"enum": ["supports", "contradicts"]}
-      }
-    },
-    "claim": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "statement", "supporters", "dissenters", "status", "evidence"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^claim-[1-9][0-9]*$"},
-        "statement": {"type": "string", "minLength": 1},
-        "supporters": {"$ref": "#/$defs/heads"},
-        "dissenters": {"$ref": "#/$defs/heads"},
-        "status": {"enum": ["agreed", "disputed", "unresolved"]},
-        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceLink"}}
-      }
-    },
     "chair": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["chair", "verdict", "agreed", "dissent", "recommendation", "claims"],
+      "required": ["chair", "verdict", "agreed", "dissent", "recommendation"],
       "properties": {
         "chair": {"type": "string", "minLength": 1},
         "verdict": {"enum": ["CONSENSUS", "CONTINUE", "SPLIT", "INSUFFICIENT_EVIDENCE"]},
         "agreed": {"$ref": "#/$defs/heads"},
         "dissent": {"$ref": "#/$defs/heads"},
-        "recommendation": {"type": "string"},
-        "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}}
+        "recommendation": {"type": "string"}
       }
     }
   }

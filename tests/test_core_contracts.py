@@ -178,7 +178,7 @@ def test_run_result_has_stable_public_shape_and_exit_semantics():
 
     payload = result.to_dict()
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["question_hash"] != "Why?"
     assert payload["successful_heads"] == ["codex"]
     assert payload["failed_heads"] == ["claude"]

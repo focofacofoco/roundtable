@@ -196,7 +196,7 @@ class RoundtableService:
                 break
             assert chair_invocation is not None
             parsed_chair = _parse_chair(
-                chair_invocation.content, chair_name, participants
+                chair_invocation.content, chair_name, round_responses
             )
             if parsed_chair is None:
                 result.errors.append(

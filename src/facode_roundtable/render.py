@@ -51,4 +51,25 @@ def render_markdown(result: RunResult) -> str:
             lines.extend(["**Agreed**", *[f"- {item}" for item in result.chair.agreed], ""])
         if result.chair.dissent:
             lines.extend(["**Dissent**", *[f"- {item}" for item in result.chair.dissent], ""])
+        if result.chair.claims:
+            lines.extend(["## Claims", ""])
+            for claim in result.chair.claims:
+                lines.extend(
+                    [
+                        f"### Claim {claim.id} — {claim.status}",
+                        "",
+                        terminal_safe(claim.statement),
+                        "",
+                    ]
+                )
+                if claim.supporters:
+                    lines.append(f"- Supporters: {', '.join(claim.supporters)}")
+                if claim.dissenters:
+                    lines.append(f"- Dissenters: {', '.join(claim.dissenters)}")
+                for evidence in claim.evidence:
+                    lines.append(
+                        f"- Evidence: {terminal_safe(evidence.url)} "
+                        f"({evidence.relation} — {', '.join(evidence.providers)})"
+                    )
+                lines.append("")
     return "\n".join(lines).rstrip() + "\n"
