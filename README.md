@@ -5,9 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-gh release download v0.14.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
-gh release verify-asset v0.14.0 roundtable-dist/facode_roundtable-0.14.0-py3-none-any.whl --repo focofacofoco/roundtable
-uv tool install roundtable-dist/facode_roundtable-0.14.0-py3-none-any.whl
+gh release download v0.15.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.15.0 roundtable-dist/facode_roundtable-0.15.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.15.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -87,6 +87,8 @@ use `--model provider=id`. Authentication remains login-only in every case.
   validated verdict back to the real requested heads.
 - Multi-round results include a validated claim ledger. Evidence links are accepted
   only when the named provider actually reported the URL.
+- A continuing round focuses on disputed or unresolved claims while retaining the
+  complete prior positions as untrusted context.
 - JSON and MCP use the same `RunResult` schema.
 - Partial success exits `10`; no usable result exits `20`.
 - Runs are ephemeral by default. Only `--out` and `--save` persist output.

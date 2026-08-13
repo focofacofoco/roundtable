@@ -30,11 +30,31 @@ def select_chair(requested: str, participants: list[str]) -> str | None:
 
 
 def deliberation_prompt(
-    base_prompt: str, round_number: int, previous: list[ProviderResponse]
+    base_prompt: str,
+    round_number: int,
+    previous: list[ProviderResponse],
+    focus: list[ClaimRecord],
 ) -> str:
     aliases = _participant_aliases([response.provider for response in previous])
     payload = {
         "source_round": round_number - 1,
+        "focus_claims": [
+            {
+                "id": claim.id,
+                "statement": claim.statement,
+                "supporters": [aliases[name] for name in claim.supporters],
+                "dissenters": [aliases[name] for name in claim.dissenters],
+                "evidence": [
+                    {
+                        "url": item.url,
+                        "participants": [aliases[name] for name in item.providers],
+                        "relation": item.relation,
+                    }
+                    for item in claim.evidence
+                ],
+            }
+            for claim in focus
+        ],
         "positions": [
             {"participant": aliases[response.provider], "content": response.content}
             for response in previous
@@ -48,6 +68,16 @@ def deliberation_prompt(
         "state remaining disagreements, and give your current answer.\n"
         f"<peer-positions>\n{json.dumps(payload, ensure_ascii=False)}\n</peer-positions>"
     )
+
+
+def continuation_focus(
+    chair: ChairResult, *, research: bool
+) -> list[ClaimRecord]:
+    return [
+        claim
+        for claim in chair.claims
+        if claim.status != "agreed" or (research and not claim.evidence)
+    ]
 
 
 def chair_prompt(

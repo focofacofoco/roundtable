@@ -6,6 +6,7 @@ import math
 import re
 
 from facode_roundtable.deliberation import chair_prompt as _chair_prompt
+from facode_roundtable.deliberation import continuation_focus
 from facode_roundtable.deliberation import deliberation_prompt as _deliberation_prompt
 from facode_roundtable.deliberation import insufficient_chair as _insufficient_chair
 from facode_roundtable.deliberation import parse_chair as _parse_chair
@@ -211,11 +212,27 @@ class RoundtableService:
                     chair_name, "The chair verdict failed strict validation."
                 )
                 break
+            focus = continuation_focus(parsed_chair, research=research)
+            if parsed_chair.verdict == "CONTINUE" and (
+                round_number == rounds or not focus
+            ):
+                result.errors.append(
+                    ResultError(
+                        chair_name,
+                        "chair_invalid",
+                        "chair returned an invalid continuation",
+                        round=round_number,
+                    )
+                )
+                result.chair = _insufficient_chair(
+                    chair_name, "The chair continuation failed strict validation."
+                )
+                break
             result.chair = parsed_chair
-            if parsed_chair.verdict != "CONTINUE" or round_number == rounds:
+            if parsed_chair.verdict != "CONTINUE":
                 break
             round_prompt = _deliberation_prompt(
-                base_prompt, round_number + 1, round_responses
+                base_prompt, round_number + 1, round_responses, focus
             )
         result.finish()
         return result
