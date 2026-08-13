@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from facode_roundtable.catalog import PROVIDER_SPECS
-from facode_roundtable.providers.base import CommandResult, ProviderStatus
+from facode_roundtable.providers.base import CommandResult, ProviderError, ProviderStatus
 from facode_roundtable.providers.claude import ClaudeAdapter
 from facode_roundtable.providers.codex import CodexAdapter
 from facode_roundtable.providers.gemini import GeminiAdapter
@@ -31,12 +33,13 @@ def result(stdout: str = "", stderr: str = "", returncode: int = 0) -> CommandRe
 def assert_catalog_status(status: ProviderStatus) -> None:
     spec = PROVIDER_SPECS[status.name]
     assert status.auth_method == spec.auth
-    assert status.research is spec.research
+    assert status.research is spec.supports_research()
 
 
 def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
     chatgpt = CodexAdapter(
-        RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")])
+        RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")]),
+        windows=True,
     )
     api_key = CodexAdapter(
         RecordingRunner([result("Logged in using an API key"), result("codex-cli 1.2.3")])
@@ -51,7 +54,7 @@ def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
         eligible=True,
         auth_method="chatgpt",
         cli_version="codex-cli 1.2.3",
-        research=False,
+        research=True,
     )
     assert_catalog_status(accepted)
     assert rejected.eligible is False
@@ -77,6 +80,60 @@ def test_codex_invocation_is_ephemeral_isolated_and_parses_json_events():
     assert {"shell_tool", "code_mode_host", "apps", "plugins", "multi_agent", "view_image"} <= disabled
     assert ["--config", 'web_search="disabled"'] == argv[-4:-2]
     assert argv[-2:] == ["--json", "-"]
+
+
+def test_codex_research_invocation_allows_native_web_search_only():
+    output = json.dumps(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "Sourced"}}
+    )
+    runner = RecordingRunner([result(output)])
+
+    response = asyncio.run(
+        CodexAdapter(runner, windows=True).invoke("Question", timeout=20, research=True)
+    )
+    argv, prompt = runner.calls[0]
+
+    assert response.content == "Sourced"
+    assert prompt == "Question"
+    assert argv[:3] == ["codex", "--search", "exec"]
+    disabled = {argv[index + 1] for index, value in enumerate(argv) if value == "--disable"}
+    assert {
+        "shell_tool", "code_mode_host", "apps", "plugins", "multi_agent", "view_image"
+    } <= disabled
+    config_values = [
+        argv[index + 1] for index, value in enumerate(argv) if value == "--config"
+    ]
+    assert "mcp_servers={}" in config_values
+    assert 'web_search="disabled"' not in config_values
+    assert argv[-2:] == ["--json", "-"]
+
+
+def test_codex_status_reports_research_only_on_windows():
+    windows = CodexAdapter(
+        RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")]),
+        windows=True,
+    )
+    non_windows = CodexAdapter(
+        RecordingRunner([result("Logged in using ChatGPT"), result("codex-cli 1.2.3")]),
+        windows=False,
+    )
+
+    assert asyncio.run(windows.status()).research is True
+    assert asyncio.run(non_windows.status()).research is False
+
+
+def test_codex_research_rejects_non_windows_before_runner():
+    runner = RecordingRunner([])
+
+    with pytest.raises(ProviderError, match="Windows") as captured:
+        asyncio.run(
+            CodexAdapter(runner, windows=False).invoke(
+                "Question", timeout=20, research=True
+            )
+        )
+
+    assert captured.value.code == "research_ineligible"
+    assert runner.calls == []
 
 
 def test_codex_applies_configured_model_and_xhigh_effort_under_isolation():
@@ -138,6 +195,44 @@ def test_claude_applies_configured_model_and_xhigh_effort():
 
     assert response.model == "claude-opus-5"
     assert argv[-4:] == ["--model", "claude-opus-5", "--effort", "xhigh"]
+
+
+def test_claude_research_preapproves_only_web_tools():
+    runner = RecordingRunner(
+        [result(json.dumps({"result": "Sourced", "is_error": False, "permission_denials": []}))]
+    )
+
+    response = asyncio.run(
+        ClaudeAdapter(runner).invoke("Question", timeout=20, research=True)
+    )
+    argv, prompt = runner.calls[0]
+
+    assert response.content == "Sourced"
+    assert prompt == "Question"
+    assert argv == [
+        "claude", "--print", "--output-format", "json", "--no-session-persistence",
+        "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+        "--permission-mode", "dontAsk", "--safe-mode",
+    ]
+
+
+def test_claude_research_fails_closed_on_permission_denial():
+    payload = {
+        "result": "Unverified answer",
+        "is_error": False,
+        "permission_denials": [{"tool_name": "WebSearch"}],
+    }
+
+    try:
+        asyncio.run(
+            ClaudeAdapter(RecordingRunner([result(json.dumps(payload))])).invoke(
+                "Question", timeout=20, research=True
+            )
+        )
+    except Exception as error:
+        assert getattr(error, "code", None) == "research_denied"
+    else:
+        raise AssertionError("denied research tools must fail closed")
 
 
 def test_grok_requires_oauth_and_disable_api_key_policy():

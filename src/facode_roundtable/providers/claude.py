@@ -77,10 +77,14 @@ class ClaudeAdapter:
             "--no-session-persistence",
             "--tools",
             tools,
+        ]
+        if research:
+            argv.extend(["--allowedTools", tools])
+        argv.extend([
             "--permission-mode",
             "dontAsk",
             "--safe-mode",
-        ]
+        ])
         if selected_model:
             argv.extend(["--model", selected_model])
         if self.default_effort:
@@ -94,6 +98,8 @@ class ClaudeAdapter:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise ProviderError("protocol_error", "claude returned invalid JSON") from exc
+        if research and payload.get("permission_denials"):
+            raise ProviderError("research_denied", "claude web research tools were denied")
         content = payload.get("result")
         if payload.get("is_error") or not isinstance(content, str) or not content.strip():
             raise ProviderError("empty_response", "claude returned no answer")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from facode_roundtable.catalog import PROVIDER_SPECS
 
@@ -37,11 +38,13 @@ class CodexAdapter:
         *,
         default_model: str | None = None,
         default_effort: str | None = None,
+        windows: bool | None = None,
     ):
         self.runner = runner
         self.executable = executable
         self.default_model = default_model
         self.default_effort = default_effort
+        self._windows = os.name == "nt" if windows is None else windows
 
     async def status(self) -> ProviderStatus:
         result = await self.runner.run([self.executable, "login", "status"], timeout=15)
@@ -58,7 +61,7 @@ class CodexAdapter:
                 auth_method=spec.auth,
                 cli_version=version,
                 model=self.default_model,
-                research=spec.research,
+                research=spec.supports_research(windows=self._windows),
             )
         if "api key" in output or "api_key" in output:
             return ProviderStatus(
@@ -81,11 +84,17 @@ class CodexAdapter:
     async def invoke(
         self, prompt: str, *, timeout: float, model: str | None = None, research: bool = False
     ) -> InvocationResult:
-        if research:
-            raise ProviderError("research_ineligible", "codex cannot prove web-only tool access")
+        if research and not PROVIDER_SPECS[self.name].supports_research(
+            windows=self._windows
+        ):
+            raise ProviderError(
+                "research_ineligible", "codex research is supported only on Windows"
+            )
         selected_model = model or self.default_model
-        argv = [
-            self.executable,
+        argv = [self.executable]
+        if research:
+            argv.append("--search")
+        argv.extend([
             "exec",
             "--ephemeral",
             "--ignore-user-config",
@@ -93,10 +102,12 @@ class CodexAdapter:
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
-        ]
+        ])
         for feature in _DISABLED_FEATURES:
             argv.extend(["--disable", feature])
-        argv.extend(["--config", 'web_search="disabled"'])
+        argv.extend(["--config", "mcp_servers={}"])
+        if not research:
+            argv.extend(["--config", 'web_search="disabled"'])
         if self.default_effort:
             argv.extend(
                 ["--config", f'model_reasoning_effort="{self.default_effort}"']

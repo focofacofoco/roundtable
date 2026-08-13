@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from types import MappingProxyType
 
 
@@ -17,20 +18,25 @@ class ProviderSpec:
     default_effort: str | None = None
     supports_effort: bool = False
     research: bool = False
+    research_windows_only: bool = False
 
-    def capabilities(self) -> dict[str, str | bool]:
+    def supports_research(self, *, windows: bool | None = None) -> bool:
+        effective_windows = os.name == "nt" if windows is None else windows
+        return self.research and (not self.research_windows_only or effective_windows)
+
+    def capabilities(self, *, windows: bool | None = None) -> dict[str, str | bool]:
         return {
             "auth": self.auth,
             "model_discovery": self.model_discovery,
             "effort": self.supports_effort,
-            "research": self.research,
+            "research": self.supports_research(windows=windows),
         }
 
 
 _SPECS = (
     ProviderSpec(
         "codex", "codex", "chatgpt", "official-cli", ("debug", "models"),
-        ("login",), ("logout",), "gpt-5.6-sol", "high", True, False,
+        ("login",), ("logout",), "gpt-5.6-sol", "high", True, True, True,
     ),
     ProviderSpec(
         "claude", "claude", "first_party", "unsupported-by-cli", None,
@@ -58,8 +64,11 @@ _UNSUPPORTED_PROVIDERS = MappingProxyType(
 )
 
 
-def capabilities_payload() -> dict[str, dict[str, str | bool]]:
-    return {name: spec.capabilities() for name, spec in PROVIDER_SPECS.items()}
+def capabilities_payload(*, windows: bool | None = None) -> dict[str, dict[str, str | bool]]:
+    return {
+        name: spec.capabilities(windows=windows)
+        for name, spec in PROVIDER_SPECS.items()
+    }
 
 
 def unsupported_providers() -> dict[str, str]:

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from facode_roundtable.config import Config, ConfigError, PROVIDERS, load_config, save_config
-from facode_roundtable.catalog import PROVIDER_NAMES, PROVIDER_SPECS
+from facode_roundtable.catalog import PROVIDER_NAMES, PROVIDER_SPECS, capabilities_payload
 from facode_roundtable.models import ExitCode, ProviderError, ProviderResponse, RunResult
 from facode_roundtable.providers import unsupported_providers
 from facode_roundtable.runner import sanitize_environment
@@ -211,7 +211,7 @@ def test_provider_specs_are_the_single_source_for_defaults_and_capabilities():
             "executable": spec.executable,
             "model": spec.default_model,
             "effort": spec.default_effort,
-            "capabilities": spec.capabilities(),
+            "capabilities": spec.capabilities(windows=True),
         }
         for name, spec in PROVIDER_SPECS.items()
     } == {
@@ -223,7 +223,7 @@ def test_provider_specs_are_the_single_source_for_defaults_and_capabilities():
                 "auth": "chatgpt",
                 "model_discovery": "official-cli",
                 "effort": True,
-                "research": False,
+                "research": True,
             },
         },
         "claude": {
@@ -281,6 +281,14 @@ def test_provider_specs_are_the_single_source_for_defaults_and_capabilities():
     }
     with pytest.raises(TypeError):
         PROVIDER_SPECS["codex"] = PROVIDER_SPECS["claude"]
+
+
+def test_codex_research_capability_is_windows_only():
+    assert PROVIDER_SPECS["codex"].capabilities(windows=True)["research"] is True
+    assert PROVIDER_SPECS["codex"].capabilities(windows=False)["research"] is False
+    assert capabilities_payload(windows=True)["codex"]["research"] is True
+    assert capabilities_payload(windows=False)["codex"]["research"] is False
+    assert capabilities_payload(windows=False)["claude"]["research"] is True
 
 
 def test_environment_sanitization_removes_credentials_without_touching_safe_values():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from mcp import Client
 
@@ -97,6 +98,7 @@ def test_mcp_provider_and_doctor_contracts_share_catalog_capabilities(tmp_path):
     assert providers.structured_content["capabilities"] == (
         diagnosis.structured_content["capabilities"]
     )
+    assert providers.structured_content["capabilities"]["codex"]["research"] is (os.name == "nt")
     assert providers.structured_content["capabilities"]["minimax"] == {
         "auth": "oauth",
         "model_discovery": "unsupported-by-cli",

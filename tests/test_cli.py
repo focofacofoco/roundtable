@@ -165,7 +165,7 @@ def test_providers_json_reports_sanitized_login_status(capsys):
         "auth": "chatgpt",
         "model_discovery": "official-cli",
         "effort": True,
-        "research": False,
+        "research": os.name == "nt",
     }
     validate(payload, output_schema("providers"))
     assert '"auth_method": "chatgpt"' in output
