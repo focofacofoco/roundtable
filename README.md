@@ -5,9 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-gh release download v0.12.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
-gh release verify-asset v0.12.0 roundtable-dist/facode_roundtable-0.12.0-py3-none-any.whl --repo focofacofoco/roundtable
-uv tool install roundtable-dist/facode_roundtable-0.12.0-py3-none-any.whl
+gh release download v0.13.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.13.0 roundtable-dist/facode_roundtable-0.13.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.13.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -83,6 +83,8 @@ use `--model provider=id`. Authentication remains login-only in every case.
 ## Output and privacy
 
 - Advisory answers are independent and concurrent.
+- Deliberation hides provider identities from peers and the chair, then maps the
+  validated verdict back to the real requested heads.
 - JSON and MCP use the same `RunResult` schema.
 - Partial success exits `10`; no usable result exits `20`.
 - Runs are ephemeral by default. Only `--out` and `--save` persist output.

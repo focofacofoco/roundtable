@@ -203,10 +203,10 @@ def test_deliberation_keeps_round_one_blind_then_stops_on_chair_consensus():
         "claude",
         [
             "Claude R1",
-            '{"verdict":"CONTINUE","agreed":[],"dissent":["codex","claude"],'
+            '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
             '"recommendation":"Reconsider."}',
             "Claude R2",
-            '{"verdict":"CONSENSUS","agreed":["codex","claude"],"dissent":[],'
+            '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
             '"recommendation":"Ship option A."}',
         ],
     )
@@ -229,13 +229,67 @@ def test_deliberation_keeps_round_one_blind_then_stops_on_chair_consensus():
     assert len(claude.prompts) == 4
 
 
+def test_later_rounds_hide_provider_identity_and_remap_valid_aliases():
+    codex = ScriptedAdapter("codex", ["Position one", "Revised one"])
+    claude = ScriptedAdapter(
+        "claude",
+        [
+            "Position two",
+            '{"verdict":"CONTINUE","agreed":[],"dissent":'
+            '["participant-1","participant-2"],"recommendation":"Reconsider."}',
+            "Revised two",
+            '{"verdict":"CONSENSUS","agreed":'
+            '["participant-1","participant-2"],"dissent":[],"recommendation":"Ship."}',
+        ],
+    )
+
+    result = asyncio.run(
+        RoundtableService({"codex": codex, "claude": claude}).ask(
+            "Question", heads=["codex", "claude"], rounds=3
+        )
+    )
+
+    chair_prompt = claude.prompts[1]
+    peer_prompt = codex.prompts[1]
+    assert '"participant": "participant-1"' in chair_prompt
+    assert '"participant": "participant-2"' in peer_prompt
+    assert "codex" not in chair_prompt.lower()
+    assert "claude" not in chair_prompt.lower()
+    assert "codex" not in peer_prompt.lower()
+    assert "claude" not in peer_prompt.lower()
+    assert result.chair is not None
+    assert result.chair.agreed == ["codex", "claude"]
+
+
+def test_chair_rejects_unknown_opaque_participant():
+    codex = ScriptedAdapter("codex", ["One"])
+    claude = ScriptedAdapter(
+        "claude",
+        [
+            "Two",
+            '{"verdict":"CONSENSUS","agreed":'
+            '["participant-1","participant-9"],"dissent":[],"recommendation":"Ship."}',
+        ],
+    )
+
+    result = asyncio.run(
+        RoundtableService({"codex": codex, "claude": claude}).ask(
+            "Question", heads=["codex", "claude"], rounds=2
+        )
+    )
+
+    assert result.chair is not None
+    assert result.chair.verdict == "INSUFFICIENT_EVIDENCE"
+    assert any(error.code == "chair_invalid" for error in result.errors)
+
+
 def test_auto_chair_priority_is_stable_not_mapping_or_head_order():
     codex = ScriptedAdapter("codex", ["C", "C2"])
     claude = ScriptedAdapter(
         "claude",
         [
             "A",
-            '{"verdict":"CONSENSUS","agreed":["claude","codex"],'
+            '{"verdict":"CONSENSUS","agreed":["participant-2","participant-1"],'
             '"dissent":[],"recommendation":"Done."}',
         ],
     )
@@ -376,10 +430,10 @@ def test_research_tools_are_disabled_after_the_independent_first_round():
         "claude",
         [
             "A1",
-            '{"verdict":"CONTINUE","agreed":[],"dissent":["codex","claude"],'
+            '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
             '"recommendation":"Continue."}',
             "A2",
-            '{"verdict":"CONSENSUS","agreed":["codex","claude"],"dissent":[],'
+            '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
             '"recommendation":"Done."}',
         ],
     )
@@ -396,7 +450,7 @@ def test_research_tools_are_disabled_after_the_independent_first_round():
 
 def test_consensus_must_include_every_current_participant():
     content = (
-        '{"verdict":"CONSENSUS","agreed":["codex","claude"],"dissent":[],'
+        '{"verdict":"CONSENSUS","agreed":["participant-1","participant-2"],"dissent":[],'
         '"recommendation":"Ship."}'
     )
 
@@ -486,7 +540,7 @@ def test_total_deadline_includes_chair_and_later_rounds():
             await asyncio.sleep(0.03)
             if "neutral chair" in prompt:
                 return InvocationResult(
-                    '{"verdict":"CONTINUE","agreed":[],"dissent":["codex","claude"],'
+                    '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
                     '"recommendation":"Continue."}'
                 )
             return InvocationResult(f"{self.name} answer")

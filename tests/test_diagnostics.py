@@ -224,7 +224,7 @@ def test_runtime_evidence_is_path_free_and_fingerprint_is_deterministic():
 
     assert first["runtime_fingerprint"] == second["runtime_fingerprint"]
     assert len(first["runtime_fingerprint"]) == 64
-    assert first["roundtable_version"] == "0.12.0"
+    assert first["roundtable_version"] == "0.13.0"
     assert set(first) == {
         "timestamp",
         "roundtable_version",

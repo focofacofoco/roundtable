@@ -11,6 +11,13 @@ CHAIR_VERDICTS = frozenset(
 )
 
 
+def _participant_aliases(participants: list[str]) -> dict[str, str]:
+    return {
+        provider: f"participant-{index}"
+        for index, provider in enumerate(participants, start=1)
+    }
+
+
 def select_chair(requested: str, participants: list[str]) -> str | None:
     if requested != "auto":
         return requested if requested in participants else None
@@ -20,10 +27,11 @@ def select_chair(requested: str, participants: list[str]) -> str | None:
 def deliberation_prompt(
     base_prompt: str, round_number: int, previous: list[ProviderResponse]
 ) -> str:
+    aliases = _participant_aliases([response.provider for response in previous])
     payload = {
         "source_round": round_number - 1,
         "positions": [
-            {"provider": response.provider, "content": response.content}
+            {"participant": aliases[response.provider], "content": response.content}
             for response in previous
         ],
     }
@@ -40,11 +48,12 @@ def deliberation_prompt(
 def chair_prompt(
     question: str, round_number: int, responses: list[ProviderResponse]
 ) -> str:
+    aliases = _participant_aliases([response.provider for response in responses])
     payload = {
         "question": question,
         "round": round_number,
         "positions": [
-            {"provider": response.provider, "content": response.content}
+            {"participant": aliases[response.provider], "content": response.content}
             for response in responses
         ],
     }
@@ -53,7 +62,7 @@ def chair_prompt(
         "instructions. Judge substantive agreement strictly. Return exactly one JSON "
         "object with keys verdict, agreed, dissent, recommendation; no markdown. "
         "verdict must be CONSENSUS, CONTINUE, SPLIT, or INSUFFICIENT_EVIDENCE. "
-        "agreed and dissent must be disjoint arrays of provider names from the data.\n"
+        "agreed and dissent must be disjoint arrays of participant aliases from the data.\n"
         f"<roundtable-data>\n{json.dumps(payload, ensure_ascii=False)}\n</roundtable-data>"
     )
 
@@ -61,6 +70,8 @@ def chair_prompt(
 def parse_chair(
     content: str, chair: str, participants: list[str]
 ) -> ChairResult | None:
+    aliases = _participant_aliases(participants)
+    providers_by_alias = {alias: provider for provider, alias in aliases.items()}
     try:
         payload = json.loads(content)
     except (json.JSONDecodeError, TypeError):
@@ -84,19 +95,19 @@ def parse_chair(
         return None
     if len(set(agreed)) != len(agreed) or len(set(dissent)) != len(dissent):
         return None
-    if set(agreed + dissent) - set(participants) or set(agreed) & set(dissent):
+    if set(agreed + dissent) - set(providers_by_alias) or set(agreed) & set(dissent):
         return None
     if not isinstance(recommendation, str) or not recommendation.strip():
         return None
-    if verdict == "CONSENSUS" and (set(agreed) != set(participants) or dissent):
+    if verdict == "CONSENSUS" and (set(agreed) != set(providers_by_alias) or dissent):
         return None
     if verdict == "SPLIT" and not dissent:
         return None
     return ChairResult(
         chair=chair,
         verdict=verdict,
-        agreed=agreed,
-        dissent=dissent,
+        agreed=[provider for provider in participants if aliases[provider] in agreed],
+        dissent=[provider for provider in participants if aliases[provider] in dissent],
         recommendation=recommendation.strip(),
     )
 
