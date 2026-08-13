@@ -4,7 +4,7 @@
   "title": "Roundtable doctor output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "config_path", "config_valid", "providers", "live", "capabilities"],
+  "required": ["schema_version", "config_path", "config_valid", "providers", "live", "capabilities", "evidence", "qualification"],
   "properties": {
     "schema_version": {"const": 1},
     "config_path": {"type": "string"},
@@ -14,7 +14,9 @@
       "items": {"$ref": "#/$defs/providerStatus"}
     },
     "live": {"type": "object", "additionalProperties": {"enum": ["ok", "failed"]}},
-    "capabilities": {"$ref": "#/$defs/capabilityCatalog"}
+    "capabilities": {"$ref": "#/$defs/capabilityCatalog"},
+    "evidence": {"$ref": "#/$defs/evidence"},
+    "qualification": {"$ref": "#/$defs/qualification"}
   },
   "$defs": {
     "providerStatus": {
@@ -53,6 +55,44 @@
         "model_discovery": {"enum": ["official-cli", "unsupported-by-cli"]},
         "effort": {"type": "boolean"},
         "research": {"type": "boolean"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp", "roundtable_version", "python", "platform", "update_channel", "runtime_fingerprint"],
+      "properties": {
+        "timestamp": {"type": "string", "format": "date-time"},
+        "roundtable_version": {"type": "string"},
+        "python": {"type": "string"},
+        "platform": {"type": "string"},
+        "update_channel": {"enum": ["beta", "stable"]},
+        "runtime_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["performed", "qualified", "quorum_required", "successful", "results"],
+      "properties": {
+        "performed": {"type": "boolean"},
+        "qualified": {"type": ["boolean", "null"]},
+        "quorum_required": {"const": 2},
+        "successful": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "status", "model", "duration_ms"],
+            "properties": {
+              "provider": {"type": "string"},
+              "status": {"type": "string"},
+              "model": {"type": ["string", "null"]},
+              "duration_ms": {"type": ["integer", "null"], "minimum": 0}
+            }
+          }
+        }
       }
     }
   }

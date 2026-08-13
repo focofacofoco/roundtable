@@ -8,7 +8,8 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 from facode_roundtable.catalog import capabilities_payload, unsupported_providers
-from facode_roundtable.config import Config, config_path, load_config
+from facode_roundtable.config import Config, load_config
+from facode_roundtable.diagnostics import build_diagnosis
 from facode_roundtable.render import render_markdown
 from facode_roundtable.service import RoundtableService
 
@@ -43,6 +44,9 @@ class DoctorWire(BaseModel):
     config_valid: bool
     providers: list[dict[str, Any]]
     capabilities: dict[str, dict[str, Any]]
+    live: dict[str, str]
+    evidence: dict[str, Any]
+    qualification: dict[str, Any]
 
 
 def create_server(
@@ -139,16 +143,17 @@ def create_server(
             load_config(config_file)
         except Exception:
             valid = False
-        statuses = await service.statuses()
-        payload = {
-            "schema_version": 1,
-            "config_path": str(config_file or config_path()),
-            "config_valid": valid,
-            "providers": [status.to_dict() for status in statuses],
-            "capabilities": capabilities_payload(),
-        }
+        payload = await build_diagnosis(
+            service,
+            effective,
+            config_file=config_file,
+            config_valid=valid,
+            live=False,
+        )
+        statuses = payload["providers"]
         text = f"Config: {'valid' if valid else 'invalid'}\n" + "\n".join(
-            f"- {item.name}: {'eligible' if item.eligible else item.reason}" for item in statuses
+            f"- {item['name']}: {'eligible' if item['eligible'] else item['reason']}"
+            for item in statuses
         )
         return CallToolResult(
             content=[TextContent(type="text", text=text)],

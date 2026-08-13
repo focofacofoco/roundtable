@@ -76,7 +76,7 @@ def output_schema(name):
 
 def test_version_contract(capsys):
     assert main(["version"]) == 0
-    assert capsys.readouterr().out == "roundtable 0.11.0\n"
+    assert capsys.readouterr().out == "roundtable 0.12.0\n"
 
 
 def test_lightweight_cli_import_does_not_load_mcp_sdk():
@@ -189,6 +189,35 @@ def test_doctor_json_exposes_the_same_catalog_capabilities(capsys, tmp_path):
         "research": True,
     }
     validate(payload, output_schema("doctor"))
+
+
+def test_doctor_live_exit_reflects_qualification_quorum(capsys, tmp_path):
+    class LiveService(FakeService):
+        async def statuses(self):
+            return [
+                ProviderStatus("codex", True, True, auth_method="chatgpt"),
+                ProviderStatus("claude", True, True, auth_method="first_party"),
+            ]
+
+        async def ask(self, question, **kwargs):
+            name = kwargs["heads"][0]
+            result = RunResult.create(question, [name])
+            result.eligible_heads = [name]
+            result.responses.append(
+                ProviderResponse(name, "OK" if name == "codex" else "not exact", 1)
+            )
+            result.finish()
+            return result
+
+    code = main(
+        ["doctor", "--live", "--json"],
+        service=LiveService(),
+        config_file=tmp_path / "config.json",
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 3
+    assert payload["qualification"]["qualified"] is False
 
 
 def test_config_set_show_and_reset_are_strict_and_atomic(tmp_path, capsys):

@@ -25,6 +25,7 @@ from facode_roundtable.config import (
     save_config,
 )
 from facode_roundtable.executables import resolve_cli
+from facode_roundtable.diagnostics import build_diagnosis
 from facode_roundtable.harness import HarnessManager
 from facode_roundtable.lifecycle import ReleaseUpdater
 from facode_roundtable.models import ExitCode
@@ -165,7 +166,13 @@ def main(
         except ConfigError:
             doctor_config = Config()
         application = service or default_service(doctor_config)
-        return _doctor(application, as_json=args.json, live=args.live, path=config_file)
+        return _doctor(
+            application,
+            doctor_config,
+            as_json=args.json,
+            live=args.live,
+            path=config_file,
+        )
     try:
         effective_config = load_config(config_file)
     except ConfigError as exc:
@@ -286,47 +293,41 @@ async def _statuses(service: RoundtableService):
 
 
 def _doctor(
-    service: RoundtableService, *, as_json: bool, live: bool, path: Path | None
+    service: RoundtableService,
+    config: Config,
+    *,
+    as_json: bool,
+    live: bool,
+    path: Path | None,
 ) -> int:
     try:
         load_config(path)
         config_valid = True
     except ConfigError:
         config_valid = False
-    statuses, live_results = asyncio.run(_doctor_checks(service, live=live))
-    payload = {
-        "schema_version": 1,
-        "config_path": str(path or config_path()),
-        "config_valid": config_valid,
-        "providers": [status.to_dict() for status in statuses],
-        "live": live_results,
-        "capabilities": capabilities_payload(),
-    }
+    payload = asyncio.run(
+        build_diagnosis(
+            service,
+            config,
+            config_file=path,
+            config_valid=config_valid,
+            live=live,
+        )
+    )
     if as_json:
         print(json.dumps(payload, indent=2))
     else:
         print(f"Config: {'valid' if config_valid else 'invalid'} ({payload['config_path']})")
-        for status in statuses:
-            state = "eligible" if status.eligible else status.reason
-            suffix = f", live={live_results[status.name]}" if status.name in live_results else ""
-            print(f"{status.name:8} {state}{suffix}")
-    return 0 if config_valid else 2
-
-
-async def _doctor_checks(
-    service: RoundtableService, *, live: bool
-) -> tuple[list, dict[str, str]]:
-    statuses = await _statuses(service)
-    live_results: dict[str, str] = {}
-    if live:
-        for status in statuses:
-            if not status.eligible:
-                continue
-            result = await service.ask(
-                "Reply with exactly: OK", heads=[status.name], timeout=60
-            )
-            live_results[status.name] = "ok" if result.successful_heads else "failed"
-    return statuses, live_results
+        for status in payload["providers"]:
+            name = status["name"]
+            state = "eligible" if status["eligible"] else status["reason"]
+            suffix = f", live={payload['live'][name]}" if name in payload["live"] else ""
+            print(f"{name:8} {state}{suffix}")
+    if not config_valid:
+        return 2
+    if live and payload["qualification"]["qualified"] is not True:
+        return 3
+    return 0
 
 
 def _auth(service: RoundtableService, command: str, provider: str | None) -> int:

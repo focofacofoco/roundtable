@@ -5,9 +5,9 @@ Roundtable convenes multiple frontier-model command-line tools for independent a
 ## Install
 
 ```text
-gh release download v0.11.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
-gh release verify-asset v0.11.0 roundtable-dist/facode_roundtable-0.11.0-py3-none-any.whl --repo focofacofoco/roundtable
-uv tool install roundtable-dist/facode_roundtable-0.11.0-py3-none-any.whl
+gh release download v0.12.0 --repo focofacofoco/roundtable --pattern "*.whl" --dir roundtable-dist
+gh release verify-asset v0.12.0 roundtable-dist/facode_roundtable-0.12.0-py3-none-any.whl --repo focofacofoco/roundtable
+uv tool install roundtable-dist/facode_roundtable-0.12.0-py3-none-any.whl
 roundtable harness install
 ```
 
@@ -45,6 +45,10 @@ roundtable ask -q "..." --heads codex,claude --format json
 roundtable ask -q "..." --rounds 3 --chair auto
 roundtable ask -q "..." --research
 ```
+
+`roundtable doctor --live --json` qualifies the installation only when at least two
+eligible providers return exactly `OK`. Its content-free receipt includes provider/model
+outcomes, durations, runtime evidence, and a deterministic package fingerprint.
 
 Research is fail-closed. A provider participates only when Roundtable can constrain it to web tools while denying local file, command and MCP tools.
 
