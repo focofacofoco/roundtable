@@ -409,7 +409,7 @@ def _build_prompt(question: str, context: list[str]) -> str:
 
 def _reported_citations(content: str) -> list[Citation]:
     urls: list[str] = []
-    for match in re.findall(r'https?://[^\s<>"\']+', content):
+    for match in re.findall(r"https?://[^\s<>\"'`\[\]]+", content):
         url = match.rstrip(".,;:!?)]}")
         if url and url not in urls:
             urls.append(url)

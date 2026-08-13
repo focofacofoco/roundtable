@@ -100,6 +100,27 @@ def test_research_preserves_provider_reported_urls_as_typed_citations():
     assert result.responses[0].citations[0].status == "provider_reported"
 
 
+def test_research_normalizes_markdown_and_inline_code_urls():
+    adapter = FakeAdapter(
+        "codex",
+        answer=(
+            "Sources: [https://example.com/a](https://example.com/a) "
+            "and `https://example.com/b`."
+        ),
+    )
+
+    result = asyncio.run(
+        RoundtableService({"codex": adapter}).ask(
+            "Which sources?", heads=["codex"], research=True
+        )
+    )
+
+    assert [citation.url for citation in result.responses[0].citations] == [
+        "https://example.com/a",
+        "https://example.com/b",
+    ]
+
+
 def test_invocations_start_concurrently_but_results_keep_requested_order():
     async def scenario():
         started: set[str] = set()
