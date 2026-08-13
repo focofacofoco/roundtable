@@ -878,8 +878,8 @@ def test_total_deadline_includes_status_and_invocation():
 def test_total_deadline_includes_chair_and_later_rounds():
     class SlowDeliberator(FakeAdapter):
         async def invoke(self, prompt, *, timeout, model=None, research=False):
-            await asyncio.sleep(0.03)
             if "neutral chair" in prompt:
+                await asyncio.sleep(1)
                 return InvocationResult(
                     '{"verdict":"CONTINUE","agreed":[],"dissent":["participant-1","participant-2"],'
                     '"recommendation":"Continue.","claims":[]}'
@@ -893,10 +893,10 @@ def test_total_deadline_includes_chair_and_later_rounds():
                 "codex": SlowDeliberator("codex"),
                 "claude": SlowDeliberator("claude"),
             }
-        ).ask("Question", heads=["codex", "claude"], rounds=3, timeout=0.05)
+        ).ask("Question", heads=["codex", "claude"], rounds=3, timeout=0.1)
     )
 
-    assert time.perf_counter() - started < 0.2
+    assert time.perf_counter() - started < 0.5
     assert [response.round for response in result.responses] == [1, 1]
     assert result.chair is not None
     assert result.chair.verdict == "INSUFFICIENT_EVIDENCE"
