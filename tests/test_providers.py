@@ -30,10 +30,10 @@ def result(stdout: str = "", stderr: str = "", returncode: int = 0) -> CommandRe
     return CommandResult(tuple(), returncode, stdout, stderr, 1, False)
 
 
-def assert_catalog_status(status: ProviderStatus) -> None:
+def assert_catalog_status(status: ProviderStatus, *, windows: bool | None = None) -> None:
     spec = PROVIDER_SPECS[status.name]
     assert status.auth_method == spec.auth
-    assert status.research is spec.supports_research()
+    assert status.research is spec.supports_research(windows=windows)
 
 
 def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
@@ -56,7 +56,7 @@ def test_codex_requires_chatgpt_login_and_never_accepts_api_key_status():
         cli_version="codex-cli 1.2.3",
         research=True,
     )
-    assert_catalog_status(accepted)
+    assert_catalog_status(accepted, windows=True)
     assert rejected.eligible is False
     assert rejected.reason == "api_key_auth_forbidden"
 
