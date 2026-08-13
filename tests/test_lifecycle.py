@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -353,7 +354,11 @@ def test_release_workflow_is_tag_only_and_validates_owner_annotation():
 
 
 def test_release_annotation_requires_exact_marker_version_and_sha():
-    validator = importlib.import_module("scripts.validate_release")
+    validator_path = Path(__file__).parents[1] / "scripts" / "validate_release.py"
+    spec = importlib.util.spec_from_file_location("validate_release", validator_path)
+    assert spec is not None and spec.loader is not None
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
     sha = "a" * 40
     annotation = f"facode-owned-tag\nversion: v0.9.0\nsha: {sha}\n"
 
