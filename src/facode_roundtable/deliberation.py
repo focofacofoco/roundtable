@@ -198,7 +198,7 @@ def parse_chair(
         if claim is None:
             return None
         claims.append(claim)
-    if verdict == "CONSENSUS" and any(claim.status != "agreed" for claim in claims):
+    if verdict == "CONSENSUS" and any(claim.status == "disputed" for claim in claims):
         return None
     if verdict == "SPLIT" and not any(claim.status == "disputed" for claim in claims):
         return None
@@ -225,6 +225,10 @@ def parse_chair(
             return None
         if verdict in {"CONSENSUS", "SPLIT"} and not rationale_claims:
             return None
+        if verdict == "CONSENSUS":
+            agreed_claims = {claim.id for claim in claims if claim.status == "agreed"}
+            if set(rationale_claims) - agreed_claims:
+                return None
     return ChairResult(
         chair=chair,
         verdict=verdict,
